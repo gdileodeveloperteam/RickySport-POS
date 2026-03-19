@@ -1,0 +1,42 @@
+const express = require('express');
+const router = express.Router();
+const clientesRepo = require('../../db/repositories/clientesRepo');
+
+router.get('/', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.GetAll(req.query.search);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/ctacte', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.GetCtaCte(req.query.search);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/ctacte/:guid/validar', async (req, res, next) => {
+  try {
+    const importe = parseFloat(req.query.importe) || 0;
+    const data = await clientesRepo.ValidarCreditoCtaCte(req.params.guid, importe);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:guid', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.GetByGuid(req.params.guid);
+    if (!data) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:guid/saldo', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.GetSaldo(req.params.guid);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+module.exports = router;

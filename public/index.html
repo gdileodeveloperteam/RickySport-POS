@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RickySport - POS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/css/styles.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <!-- Login Screen -->
+  <div id="loginScreen" class="d-flex align-items-center justify-content-center min-vh-100" style="background: linear-gradient(135deg, #0d1b2a 0%, #1b2838 50%, #2d3748 100%);">
+    <div class="card shadow-lg border-0" style="width: 380px; border-radius: 1rem;">
+      <div class="card-body p-4">
+        <div class="text-center mb-4">
+          <div class="bg-primary bg-gradient d-inline-flex align-items-center justify-content-center rounded-circle mb-3" style="width: 64px; height: 64px;">
+            <i class="bi bi-shop text-white fs-2"></i>
+          </div>
+          <h4 class="fw-bold mb-1">RickySport POS</h4>
+          <p class="text-muted small">Inicie sesion para continuar</p>
+        </div>
+        <form id="loginForm" onsubmit="return false;">
+          <div class="mb-3">
+            <label class="form-label fw-semibold"><i class="bi bi-person me-1"></i>Usuario</label>
+            <input type="text" id="loginUsuario" class="form-control form-control-lg" placeholder="ID de usuario" maxlength="3" autofocus required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold"><i class="bi bi-lock me-1"></i>Clave</label>
+            <input type="password" id="loginClave" class="form-control form-control-lg" placeholder="Clave de acceso">
+          </div>
+          <div id="loginError" class="alert alert-danger py-2 d-none"></div>
+          <button type="submit" id="btnLogin" class="btn btn-primary btn-lg w-100" onclick="App.Login()">
+            <i class="bi bi-box-arrow-in-right me-2"></i>Ingresar
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Container (hidden until login) -->
+  <div id="appContainer" class="d-none">
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top">
+    <div class="container-fluid">
+      <a class="navbar-brand fw-bold" href="#"><i class="bi bi-shop"></i> RickySport POS</a>
+      <div class="d-flex align-items-center gap-3">
+        <select id="selectSucursal" class="form-select form-select-sm bg-dark text-white border-secondary" style="width: 200px;"></select>
+        <div class="d-flex align-items-center gap-2 text-white">
+          <i class="bi bi-person-circle"></i>
+          <span id="navUsuarioNombre" class="small fw-semibold"></span>
+          <button class="btn btn-outline-light btn-sm" onclick="App.Logout()" title="Cerrar sesion">
+            <i class="bi bi-box-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid">
+    <div class="row">
+      <!-- Sidebar -->
+      <nav id="sidebar" class="col-md-2 col-lg-2 d-md-block bg-white sidebar border-end min-vh-100 pt-3">
+        <ul class="nav flex-column gap-1 px-2">
+          <li class="nav-item">
+            <a class="nav-link active rounded" href="#" data-section="pos" onclick="App.Navigate('pos')">
+              <i class="bi bi-cart3 me-2"></i>Nueva Venta
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="ventas" onclick="App.Navigate('ventas')">
+              <i class="bi bi-receipt me-2"></i>Ventas
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="devoluciones" onclick="App.Navigate('devoluciones')">
+              <i class="bi bi-arrow-return-left me-2"></i>Devoluciones
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="cambios" onclick="App.Navigate('cambios')">
+              <i class="bi bi-arrow-repeat me-2"></i>Cambios
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="transferencias" onclick="App.Navigate('transferencias')">
+              <i class="bi bi-arrow-left-right me-2"></i>Transferencias
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="compras" onclick="App.Navigate('compras')">
+              <i class="bi bi-truck me-2"></i>Compras
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="gastos" onclick="App.Navigate('gastos')">
+              <i class="bi bi-cash-coin me-2"></i>Gastos
+            </a>
+          </li>
+          <li class="nav-item mt-3"><small class="text-muted px-3 text-uppercase fw-semibold">Configuraci&oacute;n</small></li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="bancos" onclick="App.Navigate('bancos')">
+              <i class="bi bi-bank me-2"></i>Bancos
+            </a>
+          </li>
+        </ul>
+      </nav>
+
+      <!-- Main content -->
+      <main id="mainContent" class="col-md-10 col-lg-10 ms-sm-auto px-4 py-3">
+        <!-- Content loaded dynamically -->
+      </main>
+    </div>
+  </div>
+
+  </div><!-- /appContainer -->
+
+  <!-- Modal: Seleccionar Cliente -->
+  <div class="modal fade" id="modalCliente" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title"><i class="bi bi-person-lines-fill me-2"></i>Seleccionar Cliente</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="text" id="searchCliente" class="form-control mb-3" placeholder="Buscar por nombre, CUIT o documento...">
+          <div id="listaClientes" class="list-group" style="max-height: 400px; overflow-y: auto;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Pagos -->
+  <div class="modal fade" id="modalPagos" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white">
+          <h5 class="modal-title"><i class="bi bi-cash-stack me-2"></i>Registrar Pagos</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <h6>Total a Pagar: <span id="pagoTotalVenta" class="text-success fw-bold fs-4">$0.00</span></h6>
+            </div>
+            <div class="col-md-6 text-end">
+              <h6>Restante: <span id="pagoRestante" class="text-danger fw-bold fs-4">$0.00</span></h6>
+            </div>
+          </div>
+          <hr>
+
+          <!-- PASO 1: Tipo de pago -->
+          <div class="row g-2 mb-3">
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Tipo de Pago</label>
+              <select id="pagoTipo" class="form-select" onchange="POS.OnTipoPagoChange()">
+                <option value="EFECTIVO">Efectivo</option>
+                <option value="TARJETA">Tarjeta</option>
+                <option value="TRANSFERENCIA">Transferencia</option>
+                <option value="CTA_CTE">Cuenta Corriente</option>
+              </select>
+            </div>
+            <div class="col-md-3 d-none" id="divTarjetaOpciones">
+              <label class="form-label fw-semibold">Tarjeta</label>
+              <select id="pagoTarjeta" class="form-select"></select>
+            </div>
+            <div class="col-md-3 d-none" id="divCuotas">
+              <label class="form-label fw-semibold">Plan/Cuotas</label>
+              <select id="pagoPlan" class="form-select"></select>
+            </div>
+          </div>
+
+          <!-- PASO 2: Cliente (condicional) -->
+          <div id="pagoClienteZona" class="mb-3"></div>
+
+          <!-- Alerta crédito excedido -->
+          <div id="pagoCreditoAlerta" class="d-none mb-3"></div>
+
+          <!-- PASO 3: Importe y agregar -->
+          <div id="pagoImporteZona" class="row g-2 mb-3">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Importe</label>
+              <input type="number" id="pagoImporte" class="form-control" step="0.01" min="0">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <button class="btn btn-primary w-100" id="btnAgregarPago" onclick="POS.AgregarPago()"><i class="bi bi-plus-circle me-1"></i>Agregar</button>
+            </div>
+          </div>
+
+          <!-- Lista de pagos -->
+          <table class="table table-sm table-hover">
+            <thead class="table-light">
+              <tr><th>Tipo</th><th>Detalle</th><th class="text-end">Importe</th><th></th></tr>
+            </thead>
+            <tbody id="tablaPagos"></tbody>
+          </table>
+
+          <!-- Factura -->
+          <div id="pagoFacturaZona" class="mt-3"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-success" id="btnConfirmarVenta" onclick="POS.ConfirmarVenta()">
+            <i class="bi bi-check-circle me-1"></i>Confirmar Venta
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Detalle Venta -->
+  <div class="modal fade" id="modalDetalleVenta" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-info text-white">
+          <h5 class="modal-title"><i class="bi bi-receipt me-2"></i>Detalle de Venta</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="detalleVentaBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3">
+    <div id="toast" class="toast" role="alert">
+      <div class="toast-header">
+        <i id="toastIcon" class="bi me-2"></i>
+        <strong class="me-auto" id="toastTitle"></strong>
+        <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+      </div>
+      <div class="toast-body" id="toastBody"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

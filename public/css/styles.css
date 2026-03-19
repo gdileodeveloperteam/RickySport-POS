@@ -1,0 +1,171 @@
+/* RickySport POS Styles */
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* Sidebar */
+.sidebar .nav-link {
+  color: #495057;
+  padding: 0.6rem 1rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.sidebar .nav-link:hover {
+  background-color: #e9ecef;
+  color: #212529;
+}
+
+.sidebar .nav-link.active {
+  background-color: #0d6efd;
+  color: #fff;
+}
+
+/* POS Grid */
+.pos-item-row {
+  transition: background-color 0.15s;
+}
+
+.pos-item-row:hover {
+  background-color: #f8f9fa;
+}
+
+/* Ticket/Receipt look */
+.pos-total-bar {
+  background: linear-gradient(135deg, #198754, #157347);
+  color: white;
+  padding: 1rem 1.5rem;
+  border-radius: 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+/* Search input in POS */
+.pos-search {
+  font-size: 1.1rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid #dee2e6;
+  border-radius: 0.5rem;
+  transition: border-color 0.2s;
+}
+
+.pos-search:focus {
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+}
+
+/* Cards */
+.stat-card {
+  border: none;
+  border-radius: 0.75rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  transition: transform 0.2s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+}
+
+/* Badge sizes */
+.badge-lg {
+  font-size: 0.9rem;
+  padding: 0.5em 0.8em;
+}
+
+/* Table styles */
+.table th {
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #6c757d;
+}
+
+/* Sortable table headers */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 1.3em !important;
+  transition: color 0.15s;
+}
+th.sortable:hover {
+  color: #0d6efd;
+}
+th.sortable::after {
+  content: '\F282';
+  font-family: 'bootstrap-icons';
+  position: absolute;
+  right: 0.3em;
+  opacity: 0.3;
+  font-size: 0.75em;
+}
+th.sortable.sort-asc::after {
+  content: '\F235';
+  opacity: 1;
+  color: #0d6efd;
+}
+th.sortable.sort-desc::after {
+  content: '\F229';
+  opacity: 1;
+  color: #0d6efd;
+}
+
+/* Talle/size selector */
+.talle-btn {
+  min-width: 45px;
+  margin: 2px;
+}
+
+.talle-btn.active {
+  background-color: #0d6efd;
+  color: white;
+}
+
+/* Quantity input */
+.qty-input {
+  width: 70px;
+  text-align: center;
+}
+
+/* Modal scrollable body */
+.modal-body .list-group-item {
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.modal-body .list-group-item:hover {
+  background-color: #e9ecef;
+}
+
+/* Print styles */
+@media print {
+  .sidebar, .navbar, .no-print {
+    display: none !important;
+  }
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .sidebar {
+    min-height: auto !important;
+  }
+  .pos-total-bar {
+    font-size: 1.2rem;
+  }
+}

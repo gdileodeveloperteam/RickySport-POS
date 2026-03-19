@@ -1,0 +1,53 @@
+const express = require('express');
+const router = express.Router();
+const ventasRepo = require('../../db/repositories/ventasRepo');
+
+router.post('/', async (req, res, next) => {
+  try {
+    const { guidCliente, guidSucursal, guidVendedor, nombre, cuit, tipoOperacion, items, pagos, emitirFactura } = req.body;
+    const data = await ventasRepo.CreateVenta({ guidCliente, guidSucursal, guidVendedor, nombre, cuit, tipoOperacion, items, pagos, emitirFactura });
+    res.status(201).json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/', async (req, res, next) => {
+  try {
+    const { desde, hasta, guidSucursal } = req.query;
+    const data = await ventasRepo.GetVentas({ desde, hasta, guidSucursal });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/resumen/pagos', async (req, res, next) => {
+  try {
+    const { desde, hasta, guidSucursal } = req.query;
+    const data = await ventasRepo.GetResumenPagos({ desde, hasta, guidSucursal });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/resumen/sucursales', async (req, res, next) => {
+  try {
+    const { desde, hasta } = req.query;
+    const data = await ventasRepo.GetVentasPorSucursal({ desde, hasta });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/resumen/dev-cambios', async (req, res, next) => {
+  try {
+    const { desde, hasta, guidSucursal } = req.query;
+    const data = await ventasRepo.GetTotalesDevCambios({ desde, hasta, guidSucursal });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:guid', async (req, res, next) => {
+  try {
+    const data = await ventasRepo.GetVentaDetalle(req.params.guid);
+    if (!data) return res.status(404).json({ error: 'Venta no encontrada' });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+module.exports = router;
