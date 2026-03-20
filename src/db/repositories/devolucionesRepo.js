@@ -6,7 +6,7 @@ const EMPTY_GUID = '';
 // ============================================================================
 // Devolución: reingresa mercadería y registra en RemitosDevoluciones
 // ============================================================================
-async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, items, motivo, tipoDevolucion }) {
+async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, items, motivo, tipoDevolucion, emitirNotaCredito }) {
   const pool = await getPool();
   const tx = pool.transaction();
   await tx.begin();
@@ -127,38 +127,138 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
         .input('importe', sql.Decimal(13, 3), totalDevolucion)
         .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) - @importe WHERE GUID = @guid`);
 
-      const guidMovCli = newGuid();
-      await tx.request()
-        .input('guid', sql.Char(16), guidMovCli)
-        .input('fecha', sql.Decimal(7), dateToClarion())
-        .input('descripcion', sql.VarChar(2000), `Devolucion - ${motivo || 'Sin motivo'}`)
-        .input('debe', sql.Decimal(13, 3), 0)
-        .input('haber', sql.Decimal(13, 3), totalDevolucion)
-        .input('guidCliente', sql.Char(16), guidCliente)
-        .input('guidArticulo', sql.Char(16), EMPTY_GUID)
-        .input('guidRemito', sql.Char(16), EMPTY_GUID)
-        .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
-        .input('guidCaja', sql.Char(16), EMPTY_GUID)
-        .input('guidBanco', sql.Char(16), EMPTY_GUID)
-        .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
-        .input('guidRemitoDev', sql.Char(16), guidRemitoDev)
-        .input('guidRemitoCambio', sql.Char(16), EMPTY_GUID)
-        .input('ts', sql.Float, ts)
-        .input('sts', sql.Float, ts)
-        .query(`
-          INSERT INTO MovimientoClientes (GUID, FECHA, DESCRIPCION, DEBE, HABER,
-            GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
-            GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
-            GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts)
-          VALUES (@guid, @fecha, @descripcion, @debe, @haber,
-            @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
-            @guidCaja, @guidBanco, @guidMovBanco,
-            @guidRemitoDev, @guidRemitoCambio, @ts, @sts)
-        `);
+      for (const item of items) {
+        const guidMovCli = newGuid();
+        const subtotalItem = item.cantidad * item.precioUnitario;
+        await tx.request()
+          .input('guid', sql.Char(16), guidMovCli)
+          .input('fecha', sql.Decimal(7), dateToClarion())
+          .input('cantidad', sql.SmallInt, item.cantidad || 0)
+          .input('articulo', sql.VarChar(255), item.codigoArticulo || '')
+          .input('descripcion', sql.VarChar(2000), `Devolucion - ${motivo || 'Sin motivo'}`)
+          .input('talle', sql.Decimal(7, 2), item.talle || 0)
+          .input('precioUnitario', sql.Decimal(11, 2), item.precioUnitario || 0)
+          .input('iva', sql.Decimal(5, 2), item.iva || 0)
+          .input('debe', sql.Decimal(13, 3), 0)
+          .input('haber', sql.Decimal(13, 3), subtotalItem)
+          .input('saldo', sql.Decimal(13, 3), 0)
+          .input('pago', sql.Char(10), '')
+          .input('sucursal', sql.TinyInt, 0)
+          .input('guidCliente', sql.Char(16), guidCliente)
+          .input('guidArticulo', sql.Char(16), item.guidArticulo || EMPTY_GUID)
+          .input('guidRemito', sql.Char(16), EMPTY_GUID)
+          .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
+          .input('guidCaja', sql.Char(16), EMPTY_GUID)
+          .input('guidBanco', sql.Char(16), EMPTY_GUID)
+          .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
+          .input('guidRemitoDev', sql.Char(16), guidRemitoDev)
+          .input('guidRemitoCambio', sql.Char(16), EMPTY_GUID)
+          .input('ts', sql.Float, ts)
+          .input('sts', sql.Float, ts)
+          .input('dts', sql.Float, 0)
+          .query(`
+            INSERT INTO MovimientoClientes (GUID, FECHA, CANTIDAD, ARTICULO, DESCRIPCION, TALLE,
+              PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
+              GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
+              GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
+              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+            VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
+              @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
+              @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
+              @guidCaja, @guidBanco, @guidMovBanco,
+              @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
+          `);
+      }
     }
 
+    // 4. Emitir Nota de Credito si corresponde
+    let notaCreditoNumero = null;
+    if (emitirNotaCredito) {
+      const guidNotaCredito = newGuid();
+
+      const sucResult = await tx.request()
+        .input('guidSuc', sql.Char(16), guidSucursal)
+        .query(`SELECT PUNTOVENTA, ULTIMANOTACREDITOB, GUIDCONFIGURACION, IDCOMPROBANTENCDB FROM Sucursales WHERE GUID = @guidSuc`);
+
+      const suc = sucResult.recordset[0] || {};
+      const puntoVenta = suc.PUNTOVENTA || 1;
+      const ultimaNC = suc.ULTIMANOTACREDITOB || 0;
+      const numeroNC = ultimaNC + 1;
+      const guidConfig = suc.GUIDCONFIGURACION || EMPTY_GUID;
+      const idComp = suc.IDCOMPROBANTENCDB || 8;
+      const numNCStr = `${String(puntoVenta).padStart(4, '0')}-${String(numeroNC).padStart(8, '0')}`;
+
+      await tx.request()
+        .input('guid', sql.Char(16), guidNotaCredito)
+        .input('guidCliente', sql.Char(16), guidCliente || EMPTY_GUID)
+        .input('guidConfig', sql.Char(16), guidConfig)
+        .input('ts', sql.Float, ts)
+        .input('sts', sql.Float, ts)
+        .input('codConfig', sql.Int, 1)
+        .input('codImputacion', sql.Int, 0)
+        .input('codVendedor', sql.Int, 0)
+        .input('codDocAfip', sql.Decimal(3), 99)
+        .input('codConceptoAfip', sql.Decimal(3), 1)
+        .input('idComp', sql.Int, idComp)
+        .input('numFactura', sql.Char(13), numNCStr)
+        .input('puntoVenta', sql.Int, puntoVenta)
+        .input('numero', sql.Int, numeroNC)
+        .input('tipoComp', sql.Char(3), 'NCB')
+        .input('tipoFactura', sql.Char(1), 'B')
+        .input('fecha', sql.Decimal(7), dateToClarion())
+        .input('nombre', sql.Char(100), nombre || 'CONSUMIDOR FINAL')
+        .input('cuit', sql.Char(13), '')
+        .input('total', sql.Decimal(15, 2), totalDevolucion)
+        .input('neto', sql.Decimal(15, 2), totalDevolucion)
+        .input('pendiente', sql.TinyInt, 0)
+        .query(`
+          INSERT INTO Facturas (GUID, GUIDCLIENTES, GUIDCONFIGURACION, ts, sts,
+            CODIGO_CONFIGURACION, CODIGO_IMPUTACION, CODIGO_VENDEDOR,
+            CODIGO_DOCUMENTO_AFIP, CODIGO_CONCEPTO_AFIP, IDCOMP,
+            NUMERO_FACTURA, PUNTOVENTA, NUMERO,
+            TIPO_COMPROBANTE, TIPO_FACTURA, FECHA, NOMBRE, CUIT,
+            TOTAL, TOTAL_NETO21, PENDIENTE)
+          VALUES (@guid, @guidCliente, @guidConfig, @ts, @sts,
+            @codConfig, @codImputacion, @codVendedor,
+            @codDocAfip, @codConceptoAfip, @idComp,
+            @numFactura, @puntoVenta, @numero,
+            @tipoComp, @tipoFactura, @fecha, @nombre, @cuit,
+            @total, @neto, @pendiente)
+        `);
+
+      await tx.request()
+        .input('guidSuc', sql.Char(16), guidSucursal)
+        .input('numero', sql.Int, numeroNC)
+        .query(`UPDATE Sucursales SET ULTIMANOTACREDITOB = @numero WHERE GUID = @guidSuc`);
+
+      await tx.request()
+        .input('guidDev', sql.Char(16), guidRemitoDev)
+        .input('guidFactura', sql.Char(16), guidNotaCredito)
+        .query(`UPDATE RemitosDevoluciones SET GUIDFACTURAS = @guidFactura, PENDIENTEFACTURAR = 0 WHERE GUID = @guidDev`);
+
+      notaCreditoNumero = numNCStr;
+    }
+
+    // 5. Crear credito de devolucion para uso como forma de pago futura
+    const guidCredito = newGuid();
+    await tx.request()
+      .input('guid', sql.Char(16), guidCredito)
+      .input('guidCliente', sql.Char(16), guidCliente || EMPTY_GUID)
+      .input('guidRemitoDev', sql.Char(16), guidRemitoDev)
+      .input('guidSucursal', sql.Char(16), guidSucursal)
+      .input('fecha', sql.Date, new Date())
+      .input('montoOriginal', sql.Decimal(13, 3), totalDevolucion)
+      .input('ts', sql.Float, ts)
+      .input('sts', sql.Float, ts)
+      .query(`
+        INSERT INTO CreditosDevoluciones (GUID, GUIDCLIENTES, GUIDREMITOSDEVOLUCIONES, GUIDSUCURSALES,
+          FECHA, MONTOORIGINAL, MONTOUSADO, ESTADO, ts, sts)
+        VALUES (@guid, @guidCliente, @guidRemitoDev, @guidSucursal,
+          @fecha, @montoOriginal, 0, 'ACTIVO', @ts, @sts)
+      `);
+
     await tx.commit();
-    return { guid: guidRemitoDev, total: totalDevolucion };
+    return { guid: guidRemitoDev, total: totalDevolucion, notaCredito: notaCreditoNumero, guidCredito };
   } catch (err) {
     await tx.rollback();
     throw err;
@@ -316,64 +416,93 @@ async function CreateCambioConVenta({
     // PARTE A.2: MovimientoClientes del cambio (credito al cliente)
     // ================================================================
     if (guidCliente && guidCliente !== EMPTY_GUID) {
-      const guidMovCliCambio = newGuid();
-      await tx.request()
-        .input('guid', sql.Char(16), guidMovCliCambio)
-        .input('fecha', sql.Decimal(7), dateToClarion())
-        .input('descripcion', sql.VarChar(2000), `Cambio - Credito por devolucion de mercaderia`)
-        .input('debe', sql.Decimal(13, 3), 0)
-        .input('haber', sql.Decimal(13, 3), totalCambio)
-        .input('guidCliente', sql.Char(16), guidCliente)
-        .input('guidArticulo', sql.Char(16), EMPTY_GUID)
-        .input('guidRemito', sql.Char(16), EMPTY_GUID)
-        .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
-        .input('guidCaja', sql.Char(16), EMPTY_GUID)
-        .input('guidBanco', sql.Char(16), EMPTY_GUID)
-        .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
-        .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
-        .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
-        .input('ts', sql.Float, ts)
-        .input('sts', sql.Float, ts)
-        .query(`
-          INSERT INTO MovimientoClientes (GUID, FECHA, DESCRIPCION, DEBE, HABER,
-            GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
-            GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
-            GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts)
-          VALUES (@guid, @fecha, @descripcion, @debe, @haber,
-            @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
-            @guidCaja, @guidBanco, @guidMovBanco,
-            @guidRemitoDev, @guidRemitoCambio, @ts, @sts)
-        `);
+      // Un registro por cada item devuelto (credito)
+      for (const item of itemsCambio) {
+        const guidMovCliCambio = newGuid();
+        const subtotalItem = item.cantidad * item.precioUnitario;
+        await tx.request()
+          .input('guid', sql.Char(16), guidMovCliCambio)
+          .input('fecha', sql.Decimal(7), dateToClarion())
+          .input('cantidad', sql.SmallInt, item.cantidad || 0)
+          .input('articulo', sql.VarChar(255), item.codigoArticulo || '')
+          .input('descripcion', sql.VarChar(2000), `Cambio - Credito por devolucion de mercaderia`)
+          .input('talle', sql.Decimal(7, 2), item.talle || 0)
+          .input('precioUnitario', sql.Decimal(11, 2), item.precioUnitario || 0)
+          .input('iva', sql.Decimal(5, 2), item.iva || 0)
+          .input('debe', sql.Decimal(13, 3), 0)
+          .input('haber', sql.Decimal(13, 3), subtotalItem)
+          .input('saldo', sql.Decimal(13, 3), 0)
+          .input('pago', sql.Char(10), '')
+          .input('sucursal', sql.TinyInt, 0)
+          .input('guidCliente', sql.Char(16), guidCliente)
+          .input('guidArticulo', sql.Char(16), item.guidArticulo || EMPTY_GUID)
+          .input('guidRemito', sql.Char(16), EMPTY_GUID)
+          .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
+          .input('guidCaja', sql.Char(16), EMPTY_GUID)
+          .input('guidBanco', sql.Char(16), EMPTY_GUID)
+          .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
+          .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
+          .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
+          .input('ts', sql.Float, ts)
+          .input('sts', sql.Float, ts)
+          .input('dts', sql.Float, 0)
+          .query(`
+            INSERT INTO MovimientoClientes (GUID, FECHA, CANTIDAD, ARTICULO, DESCRIPCION, TALLE,
+              PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
+              GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
+              GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
+              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+            VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
+              @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
+              @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
+              @guidCaja, @guidBanco, @guidMovBanco,
+              @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
+          `);
+      }
 
-      // MovimientoClientes de la nueva venta (debito al cliente)
-      const guidMovCliVenta = newGuid();
-      await tx.request()
-        .input('guid', sql.Char(16), guidMovCliVenta)
-        .input('fecha', sql.Decimal(7), dateToClarion())
-        .input('descripcion', sql.VarChar(2000), `Cambio - Debito por nueva mercaderia`)
-        .input('debe', sql.Decimal(13, 3), totalVenta)
-        .input('haber', sql.Decimal(13, 3), 0)
-        .input('guidCliente', sql.Char(16), guidCliente)
-        .input('guidArticulo', sql.Char(16), EMPTY_GUID)
-        .input('guidRemito', sql.Char(16), guidRemitoVenta)
-        .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
-        .input('guidCaja', sql.Char(16), EMPTY_GUID)
-        .input('guidBanco', sql.Char(16), EMPTY_GUID)
-        .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
-        .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
-        .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
-        .input('ts', sql.Float, ts)
-        .input('sts', sql.Float, ts)
-        .query(`
-          INSERT INTO MovimientoClientes (GUID, FECHA, DESCRIPCION, DEBE, HABER,
-            GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
-            GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
-            GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts)
-          VALUES (@guid, @fecha, @descripcion, @debe, @haber,
-            @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
-            @guidCaja, @guidBanco, @guidMovBanco,
-            @guidRemitoDev, @guidRemitoCambio, @ts, @sts)
-        `);
+      // Un registro por cada item de la nueva venta (debito)
+      for (const item of itemsVenta) {
+        const guidMovCliVenta = newGuid();
+        const subtotalItem = item.cantidad * item.precioUnitario;
+        await tx.request()
+          .input('guid', sql.Char(16), guidMovCliVenta)
+          .input('fecha', sql.Decimal(7), dateToClarion())
+          .input('cantidad', sql.SmallInt, item.cantidad || 0)
+          .input('articulo', sql.VarChar(255), item.codigoArticulo || '')
+          .input('descripcion', sql.VarChar(2000), `Cambio - Debito por nueva mercaderia`)
+          .input('talle', sql.Decimal(7, 2), item.talle || 0)
+          .input('precioUnitario', sql.Decimal(11, 2), item.precioUnitario || 0)
+          .input('iva', sql.Decimal(5, 2), item.iva || 0)
+          .input('debe', sql.Decimal(13, 3), subtotalItem)
+          .input('haber', sql.Decimal(13, 3), 0)
+          .input('saldo', sql.Decimal(13, 3), 0)
+          .input('pago', sql.Char(10), '')
+          .input('sucursal', sql.TinyInt, 0)
+          .input('guidCliente', sql.Char(16), guidCliente)
+          .input('guidArticulo', sql.Char(16), item.guidArticulo || EMPTY_GUID)
+          .input('guidRemito', sql.Char(16), guidRemitoVenta)
+          .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
+          .input('guidCaja', sql.Char(16), EMPTY_GUID)
+          .input('guidBanco', sql.Char(16), EMPTY_GUID)
+          .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
+          .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
+          .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
+          .input('ts', sql.Float, ts)
+          .input('sts', sql.Float, ts)
+          .input('dts', sql.Float, 0)
+          .query(`
+            INSERT INTO MovimientoClientes (GUID, FECHA, CANTIDAD, ARTICULO, DESCRIPCION, TALLE,
+              PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
+              GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
+              GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
+              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+            VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
+              @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
+              @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
+              @guidCaja, @guidBanco, @guidMovBanco,
+              @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
+          `);
+      }
     }
 
     // ================================================================
@@ -551,9 +680,17 @@ async function CreateCambioConVenta({
           await tx.request()
             .input('guid', sql.Char(16), guidMovCli)
             .input('fecha', sql.Decimal(7), dateToClarion())
+            .input('cantidad', sql.SmallInt, 0)
+            .input('articulo', sql.VarChar(255), '')
             .input('descripcion', sql.VarChar(2000), `Cambio - Cta. Cte. (diferencia)`)
+            .input('talle', sql.Decimal(7, 2), 0)
+            .input('precioUnitario', sql.Decimal(11, 2), 0)
+            .input('iva', sql.Decimal(5, 2), 0)
             .input('debe', sql.Decimal(13, 3), pago.importe)
             .input('haber', sql.Decimal(13, 3), 0)
+            .input('saldo', sql.Decimal(13, 3), 0)
+            .input('pago', sql.Char(10), '')
+            .input('sucursal', sql.TinyInt, 0)
             .input('guidCliente', sql.Char(16), guidCliente)
             .input('guidArticulo', sql.Char(16), EMPTY_GUID)
             .input('guidRemito', sql.Char(16), guidRemitoVenta)
@@ -565,15 +702,18 @@ async function CreateCambioConVenta({
             .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
             .input('ts', sql.Float, ts)
             .input('sts', sql.Float, ts)
+            .input('dts', sql.Float, 0)
             .query(`
-              INSERT INTO MovimientoClientes (GUID, FECHA, DESCRIPCION, DEBE, HABER,
+              INSERT INTO MovimientoClientes (GUID, FECHA, CANTIDAD, ARTICULO, DESCRIPCION, TALLE,
+                PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
                 GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
                 GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
-                GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts)
-              VALUES (@guid, @fecha, @descripcion, @debe, @haber,
+                GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+              VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
+                @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
                 @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
                 @guidCaja, @guidBanco, @guidMovBanco,
-                @guidRemitoDev, @guidRemitoCambio, @ts, @sts)
+                @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
             `);
         }
       }
@@ -594,4 +734,71 @@ async function CreateCambioConVenta({
   }
 }
 
-module.exports = { CreateDevolucion, CreateCambioConVenta };
+// ============================================================================
+// Detalle de una devolucion (para comprobante PDF)
+// ============================================================================
+async function GetDevolucionDetalle(guidRemitoDev) {
+  const pool = await getPool();
+
+  const devolucion = await pool.request()
+    .input('guid', sql.Char(16), guidRemitoDev)
+    .query(`
+      SELECT rd.*, s.NOMBRE AS Sucursal, s.PUNTOVENTA,
+             c.NOMBRE AS ClienteNombre, c.CUIT AS ClienteCuit,
+             f.NUMERO_FACTURA AS NotaCreditoNumero, f.TIPO_COMPROBANTE AS NotaCreditoTipo
+      FROM RemitosDevoluciones rd
+      LEFT JOIN Sucursales s ON s.GUID = rd.GUIDSUCURSALES
+      LEFT JOIN Clientes c ON c.GUID = rd.GUIDCLIENTES
+      LEFT JOIN Facturas f ON f.GUID = rd.GUIDFACTURAS AND rd.GUIDFACTURAS <> ''
+      WHERE rd.GUID = @guid
+    `);
+
+  const items = await pool.request()
+    .input('guid', sql.Char(16), guidRemitoDev)
+    .query(`
+      SELECT mr.ARTICULO, mr.DESCRIPCION, mr.NUMERO AS TALLE, mr.CANTIDAD,
+             mr.NETO AS PRECIOUNITARIO, mr.SUBTOTAL, mr.TOTAL
+      FROM MovimientoRemitos mr
+      WHERE mr.GUIDREMITOSDEVOLUCIONES = @guid AND (mr.dts IS NULL OR mr.dts = 0)
+    `);
+
+  const credito = await pool.request()
+    .input('guid', sql.Char(16), guidRemitoDev)
+    .query(`
+      SELECT GUID, MONTOORIGINAL, MONTOUSADO, ESTADO,
+             (MONTOORIGINAL - MONTOUSADO) AS MONTODISPONIBLE
+      FROM CreditosDevoluciones
+      WHERE GUIDREMITOSDEVOLUCIONES = @guid AND (dts IS NULL OR dts = 0)
+    `);
+
+  return {
+    devolucion: devolucion.recordset[0] || null,
+    items: items.recordset,
+    credito: credito.recordset[0] || null,
+  };
+}
+
+// ============================================================================
+// Creditos disponibles de un cliente
+// ============================================================================
+async function GetCreditosCliente(guidCliente) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('guidCliente', sql.Char(16), guidCliente)
+    .query(`
+      SELECT cd.GUID, cd.FECHA, cd.MONTOORIGINAL, cd.MONTOUSADO,
+             (cd.MONTOORIGINAL - cd.MONTOUSADO) AS MONTODISPONIBLE,
+             cd.ESTADO, cd.GUIDREMITOSDEVOLUCIONES,
+             rd.NOMBRE AS DevolucionNombre, rd.FECHA AS DevolucionFecha
+      FROM CreditosDevoluciones cd
+      LEFT JOIN RemitosDevoluciones rd ON rd.GUID = cd.GUIDREMITOSDEVOLUCIONES
+      WHERE cd.GUIDCLIENTES = @guidCliente
+        AND cd.ESTADO = 'ACTIVO'
+        AND (cd.MONTOORIGINAL - cd.MONTOUSADO) > 0
+        AND (cd.dts IS NULL OR cd.dts = 0)
+      ORDER BY cd.FECHA ASC
+    `);
+  return result.recordset;
+}
+
+module.exports = { CreateDevolucion, CreateCambioConVenta, GetDevolucionDetalle, GetCreditosCliente };

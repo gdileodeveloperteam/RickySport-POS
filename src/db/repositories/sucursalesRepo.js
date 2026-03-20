@@ -3,7 +3,7 @@ const { getPool, sql } = require('../pool');
 async function GetAll() {
   const pool = await getPool();
   const result = await pool.request().query(`
-    SELECT GUID, CODIGOSUCURSAL, NOMBRE, CUIT, PUNTOVENTA, COTIZACIONDOLAR
+    SELECT GUID, GUIDCONFIGURACION, CODIGOSUCURSAL, NOMBRE, CUIT, PUNTOVENTA, COTIZACIONDOLAR
     FROM Sucursales
     WHERE (dts IS NULL OR dts = 0)
     ORDER BY NOMBRE

@@ -4,7 +4,7 @@ const repo = require('../../db/repositories/proveedoresRepo');
 
 router.get('/', async (req, res, next) => {
   try {
-    const data = await repo.GetAll(req.query.search);
+    const data = await repo.GetAll(req.query.search, req.query.guidConfiguracion);
     res.json(data);
   } catch (err) { next(err); }
 });

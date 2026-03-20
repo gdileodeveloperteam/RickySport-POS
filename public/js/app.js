@@ -417,11 +417,11 @@ const POS = {
   },
 
   RequiereFactura() {
-    return POS.pagos.some(p => p.tipo !== 'EFECTIVO' && p.tipo !== 'CTA_CTE');
+    return POS.pagos.some(p => p.tipo !== 'EFECTIVO' && p.tipo !== 'CTA_CTE' && p.tipo !== 'CREDITO_DEV');
   },
 
   SoloEfectivoOCtaCte() {
-    return POS.pagos.length > 0 && POS.pagos.every(p => p.tipo === 'EFECTIVO' || p.tipo === 'CTA_CTE');
+    return POS.pagos.length > 0 && POS.pagos.every(p => p.tipo === 'EFECTIVO' || p.tipo === 'CTA_CTE' || p.tipo === 'CREDITO_DEV');
   },
 
   OnTipoPagoChange() {
@@ -442,6 +442,24 @@ const POS = {
     if (tipo === 'CTA_CTE' && !POS.cliente) {
       ShowToast('Aviso', 'Seleccione un cliente para Cuenta Corriente', 'info');
       return;
+    }
+
+    if (tipo === 'CREDITO_DEV' && !POS.cliente) {
+      ShowToast('Aviso', 'Seleccione un cliente para usar Credito de Devolucion', 'info');
+      return;
+    }
+
+    if (tipo === 'CREDITO_DEV') {
+      const selCredito = document.getElementById('pagoCreditoDev');
+      if (!selCredito || !selCredito.value) {
+        ShowToast('Aviso', 'Seleccione un credito de devolucion', 'info');
+        return;
+      }
+      const creditoData = JSON.parse(selCredito.value);
+      if (importe > creditoData.disponible + 0.01) {
+        ShowToast('Aviso', `El importe excede el credito disponible (${FormatMoney(creditoData.disponible)})`, 'info');
+        return;
+      }
     }
 
     const pago = { tipo, importe, descripcion: tipo, guidBanco: '', guidBancosCuentas: '' };
@@ -470,11 +488,18 @@ const POS = {
       }
     }
 
+    if (tipo === 'CREDITO_DEV') {
+      const selCredito = document.getElementById('pagoCreditoDev');
+      const creditoData = JSON.parse(selCredito.value);
+      pago.guidCreditoDevolucion = creditoData.guid;
+      pago.descripcion = `Credito Dev. (${FormatMoney(creditoData.disponible)})`;
+    }
+
     POS.pagos.push(pago);
     document.getElementById('pagoImporte').value = '';
 
     // Si el pago requiere factura, activarla automáticamente
-    if (tipo !== 'EFECTIVO' && tipo !== 'CTA_CTE') {
+    if (tipo !== 'EFECTIVO' && tipo !== 'CTA_CTE' && tipo !== 'CREDITO_DEV') {
       POS.emitirFactura = true;
     }
 
@@ -874,6 +899,15 @@ function RenderPagosModal() {
   document.getElementById('pagoRestante').className = restante > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
   document.getElementById('pagoImporte').value = restante > 0 ? restante.toFixed(2) : '';
 
+  // ── Credito Devolucion fields ──
+  const esCreditoDev = tipoActual === 'CREDITO_DEV';
+  document.getElementById('divCreditoDevOpciones').classList.toggle('d-none', !esCreditoDev);
+  if (esCreditoDev && POS.cliente) {
+    LoadCreditosDevolucion(POS.cliente.GUID.trim());
+  } else if (esCreditoDev && !POS.cliente) {
+    document.getElementById('pagoCreditoDev').innerHTML = '<option value="">Seleccione cliente primero</option>';
+  }
+
   // ── Tarjeta fields ──
   const isTarjeta = tipoActual === 'TARJETA';
   document.getElementById('divTarjetaOpciones').classList.toggle('d-none', !isTarjeta);
@@ -1045,7 +1079,7 @@ function RenderPagosModal() {
   } else {
     tbody.innerHTML = POS.pagos.map((p, i) => `
       <tr>
-        <td><span class="badge bg-${p.tipo === 'EFECTIVO' ? 'success' : p.tipo === 'TARJETA' ? 'primary' : p.tipo === 'TRANSFERENCIA' ? 'info' : 'warning'}">${p.tipo}</span></td>
+        <td><span class="badge bg-${p.tipo === 'EFECTIVO' ? 'success' : p.tipo === 'TARJETA' ? 'primary' : p.tipo === 'TRANSFERENCIA' ? 'info' : p.tipo === 'CREDITO_DEV' ? 'secondary' : 'warning'}">${p.tipo === 'CREDITO_DEV' ? 'CREDITO DEV.' : p.tipo}</span></td>
         <td>${p.descripcion}${p.cuotas > 1 ? ` (${p.cuotas} cuotas)` : ''}</td>
         <td class="text-end fw-bold">${FormatMoney(p.importe)}</td>
         <td><button class="btn btn-sm btn-outline-danger" onclick="POS.QuitarPago(${i})"><i class="bi bi-trash"></i></button></td>
@@ -1327,7 +1361,7 @@ async function BuscarVentas() {
         </div>
         <div class="col-md-4">
           <div class="card shadow-sm">
-            <div class="card-header bg-white fw-semibold"><i class="bi bi-pie-chart me-2"></i>Dev. + Cambios vs Ventas</div>
+            <div class="card-header bg-white fw-semibold"><i class="bi bi-pie-chart me-2"></i>Devoluciones / Cambios vs Ventas</div>
             <div class="card-body d-flex justify-content-center" style="height:280px;">
               <canvas id="chartDevoluciones"></canvas>
             </div>
@@ -1360,7 +1394,7 @@ async function BuscarVentas() {
     `;
 
     // Cargar gráficos
-    RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev + totalCambios);
+    RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, totalCambios);
   } catch (err) {
     div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
   }
@@ -1368,7 +1402,7 @@ async function BuscarVentas() {
 
 const CHART_COLORS = ['#198754', '#0d6efd', '#ffc107', '#dc3545', '#6f42c1', '#0dcaf0', '#fd7e14', '#20c997', '#6610f2', '#d63384'];
 
-async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev) {
+async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, totalCambios) {
   try {
     const [pagosData, sucursalesData] = await Promise.all([
       API.GetResumenPagos({ desde, hasta, guidSucursal }),
@@ -1437,18 +1471,23 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev) {
       ctxSuc.parentElement.innerHTML = '<p class="text-muted text-center py-5">Sin datos de sucursales</p>';
     }
 
-    // Gráfico Devoluciones+Cambios vs Ventas
+    // Gráfico Devoluciones vs Cambios vs Ventas
     const ctxDev = document.getElementById('chartDevoluciones');
-    const ventasNetas = totalVentas - totalDev;
-    if (ctxDev && (totalVentas > 0 || totalDev > 0)) {
-      const pctDev = totalVentas > 0 ? ((totalDev / totalVentas) * 100).toFixed(1) : 0;
+    const totalDevCam = totalDev + totalCambios;
+    const totalBase = Math.max(totalVentas, totalDevCam, totalVentas + totalDevCam);
+    const ventasNetas = Math.max(totalVentas - totalDevCam, 0);
+    if (ctxDev && (totalVentas > 0 || totalDevCam > 0)) {
+      const divisor = totalVentas > 0 ? totalVentas : totalDevCam;
+      const pctDev = ((totalDev / divisor) * 100).toFixed(1);
+      const pctCam = ((totalCambios / divisor) * 100).toFixed(1);
+      const pctNetas = totalVentas > 0 ? Math.max(100 - pctDev - pctCam, 0).toFixed(1) : '0.0';
       new Chart(ctxDev, {
         type: 'doughnut',
         data: {
-          labels: [`Ventas Netas (${(100 - pctDev).toFixed(1)}%)`, `Dev. + Cambios (${pctDev}%)`],
+          labels: [`Ventas Netas (${pctNetas}%)`, `Devoluciones (${pctDev}%)`, `Cambios (${pctCam}%)`],
           datasets: [{
-            data: [ventasNetas, totalDev],
-            backgroundColor: ['#198754', '#dc3545'],
+            data: [ventasNetas, totalDev, totalCambios],
+            backgroundColor: ['#198754', '#dc3545', '#fd7e14'],
             borderWidth: 2,
             borderColor: '#fff',
           }],
@@ -1471,14 +1510,17 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev) {
           afterDraw(chart) {
             const { ctx: c, width, height } = chart;
             c.save();
-            c.font = 'bold 22px Segoe UI';
-            c.fillStyle = totalDev > 0 ? '#dc3545' : '#198754';
+            const pctTotal = ((totalDevCam / divisor) * 100).toFixed(1);
+            c.font = 'bold 20px Segoe UI';
+            c.fillStyle = totalDevCam > 0 ? '#dc3545' : '#198754';
             c.textAlign = 'center';
             c.textBaseline = 'middle';
-            c.fillText(`${pctDev}%`, width / 2, height / 2 - 10);
-            c.font = '12px Segoe UI';
-            c.fillStyle = '#6c757d';
-            c.fillText('devoluciones', width / 2, height / 2 + 12);
+            c.fillText(`${pctTotal}%`, width / 2, height / 2 - 16);
+            c.font = '11px Segoe UI';
+            c.fillStyle = '#dc3545';
+            c.fillText(`Dev: ${pctDev}%`, width / 2, height / 2 + 4);
+            c.fillStyle = '#fd7e14';
+            c.fillText(`Cam: ${pctCam}%`, width / 2, height / 2 + 18);
             c.restore();
           }
         }],
@@ -1701,6 +1743,10 @@ async function SeleccionarVentaDev(guid) {
               <div class="invalid-feedback">El motivo es obligatorio</div>
             </div>
           </div>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="devEmitirNC">
+            <label class="form-check-label" for="devEmitirNC"><i class="bi bi-receipt-cutoff me-1"></i>Emitir Nota de Credito fiscal</label>
+          </div>
           <table class="table table-sm">
             <thead class="table-light">
               <tr><th><input type="checkbox" id="devCheckAll" onchange="ToggleAllDev(this.checked)"></th><th>Codigo</th><th>Descripcion</th><th>Talle</th><th class="text-center">Cant. Disponible</th><th class="text-center">Cant. Devolver</th></tr>
@@ -1859,6 +1905,8 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
     });
   });
 
+  const emitirNotaCredito = document.getElementById('devEmitirNC')?.checked || false;
+
   try {
     const result = await API.CreateDevolucion({
       guidRemitoOriginal,
@@ -1869,13 +1917,233 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
       items,
       motivo,
       tipoDevolucion,
+      emitirNotaCredito,
     });
     _devCambioCliente = null;
-    ShowToast('Devolucion exitosa', `Total devuelto: ${FormatMoney(result.total)}`, 'success');
-    RenderDevoluciones(document.getElementById('mainContent'));
+
+    let msg = `Total devuelto: ${FormatMoney(result.total)}`;
+    if (result.notaCredito) msg += ` | NC: ${result.notaCredito}`;
+    msg += ` | Credito generado`;
+    ShowToast('Devolucion exitosa', msg, 'success');
+
+    // Mostrar botones de accion post-devolucion
+    const form = document.getElementById('devFormulario');
+    form.innerHTML = `
+      <div class="card shadow-sm border-success">
+        <div class="card-body text-center">
+          <h5 class="text-success mb-3"><i class="bi bi-check-circle-fill me-2"></i>Devolucion registrada</h5>
+          <p>Total: <strong>${FormatMoney(result.total)}</strong>${result.notaCredito ? ` | Nota de Credito: <strong>${result.notaCredito}</strong>` : ''}</p>
+          <p class="text-muted">Se genero un credito a favor del cliente por <strong>${FormatMoney(result.total)}</strong> aplicable en futuras compras.</p>
+          <div class="d-flex justify-content-center gap-2">
+            <button class="btn btn-primary" onclick="GenerarComprobantePDF('${result.guid}')">
+              <i class="bi bi-file-earmark-pdf me-1"></i>Generar Comprobante PDF
+            </button>
+            <button class="btn btn-outline-secondary" onclick="RenderDevoluciones(document.getElementById('mainContent'))">
+              <i class="bi bi-arrow-left me-1"></i>Volver
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
   } catch (err) {
     ShowToast('Error', err.message, 'error');
   }
+}
+
+// ── Cargar creditos de devolucion disponibles para un cliente ──
+async function LoadCreditosDevolucion(guidCliente) {
+  const sel = document.getElementById('pagoCreditoDev');
+  sel.innerHTML = '<option value="">Cargando...</option>';
+  try {
+    const creditos = await API.GetCreditosCliente(guidCliente);
+    if (creditos.length === 0) {
+      sel.innerHTML = '<option value="">Sin creditos disponibles</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">Seleccione credito...</option>';
+    creditos.forEach(c => {
+      const disponible = c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO);
+      const fechaStr = c.FECHA ? new Date(c.FECHA).toLocaleDateString('es-AR') : '';
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({ guid: c.GUID.trim(), disponible });
+      opt.textContent = `${fechaStr} - Disponible: ${FormatMoney(disponible)} (Original: ${FormatMoney(c.MONTOORIGINAL)})`;
+      sel.appendChild(opt);
+    });
+    // Auto-fill importe con disponible del primer credito
+    sel.onchange = () => {
+      if (sel.value) {
+        const d = JSON.parse(sel.value);
+        const restante = GetTotalACobrar() - POS.GetTotalPagos();
+        document.getElementById('pagoImporte').value = Math.min(d.disponible, restante).toFixed(2);
+      }
+    };
+  } catch (err) {
+    sel.innerHTML = '<option value="">Error al cargar creditos</option>';
+  }
+}
+
+// ── Generar comprobante PDF de devolucion con QR ──
+async function GenerarComprobantePDF(guidDevolucion) {
+  try {
+    const det = await API.GetDevolucionDetalle(guidDevolucion);
+    if (!det.devolucion) { ShowToast('Error', 'No se encontro la devolucion', 'error'); return; }
+
+    const d = det.devolucion;
+    const items = det.items;
+    const credito = det.credito;
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    let y = 20;
+
+    // ── Header ──
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('COMPROBANTE DE DEVOLUCION', pageW / 2, y, { align: 'center' });
+    y += 8;
+
+    if (d.NotaCreditoNumero) {
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Nota de Credito: ${(d.NotaCreditoNumero || '').trim()}`, pageW / 2, y, { align: 'center' });
+      y += 7;
+    }
+
+    doc.setDrawColor(0);
+    doc.line(margin, y, pageW - margin, y);
+    y += 7;
+
+    // ── Info general ──
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    const fechaDev = d.FECHA ? ClarionToDateStr(d.FECHA) : '';
+    const horaDev = d.HORA ? ClarionTimeToStr(d.HORA) : '';
+    doc.text(`Fecha: ${fechaDev}  ${horaDev}`, margin, y);
+    doc.text(`Sucursal: ${(d.Sucursal || '').trim()}`, pageW / 2, y);
+    y += 5;
+    doc.text(`Cliente: ${(d.ClienteNombre || d.NOMBRE || '').trim()}`, margin, y);
+    if (d.ClienteCuit) doc.text(`CUIT: ${(d.ClienteCuit || '').trim()}`, pageW / 2, y);
+    y += 5;
+    doc.text(`ID: ${(d.GUID || '').trim()}`, margin, y);
+    y += 7;
+
+    doc.line(margin, y, pageW - margin, y);
+    y += 5;
+
+    // ── Tabla items ──
+    doc.setFont('helvetica', 'bold');
+    doc.text('Codigo', margin, y);
+    doc.text('Descripcion', margin + 30, y);
+    doc.text('Talle', margin + 100, y);
+    doc.text('Cant.', margin + 118, y);
+    doc.text('P.Unit.', margin + 133, y);
+    doc.text('Subtotal', margin + 155, y);
+    y += 2;
+    doc.line(margin, y, pageW - margin, y);
+    y += 5;
+
+    doc.setFont('helvetica', 'normal');
+    items.forEach(item => {
+      if (y > 260) { doc.addPage(); y = 20; }
+      doc.text((item.ARTICULO || '').trim().substring(0, 15), margin, y);
+      doc.text((item.DESCRIPCION || '').trim().substring(0, 35), margin + 30, y);
+      doc.text(String(item.TALLE || 0), margin + 100, y);
+      doc.text(String(item.CANTIDAD || 0), margin + 118, y);
+      doc.text(FormatMoney(item.PRECIOUNITARIO || 0), margin + 133, y);
+      doc.text(FormatMoney(item.TOTAL || 0), margin + 155, y);
+      y += 5;
+    });
+
+    y += 3;
+    doc.line(margin, y, pageW - margin, y);
+    y += 7;
+
+    // ── Total ──
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`TOTAL: ${FormatMoney(d.TOTAL || 0)}`, pageW - margin, y, { align: 'right' });
+    y += 7;
+
+    if (credito) {
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      const disponible = credito.MONTODISPONIBLE || (credito.MONTOORIGINAL - credito.MONTOUSADO);
+      doc.text(`Credito disponible: ${FormatMoney(disponible)}`, pageW - margin, y, { align: 'right' });
+      y += 5;
+      doc.text(`Estado: ${credito.ESTADO}`, pageW - margin, y, { align: 'right' });
+      y += 10;
+    }
+
+    // ── Vigencia ──
+    const fechaEmision = d.FECHA ? ClarionToDate(d.FECHA) : new Date();
+    const fechaVencimiento = new Date(fechaEmision);
+    fechaVencimiento.setMonth(fechaVencimiento.getMonth() + 6);
+    const fechaVencStr = fechaVencimiento.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+    doc.setDrawColor(200, 0, 0);
+    doc.setLineWidth(0.8);
+    doc.roundedRect(margin, y, pageW - margin * 2, 16, 2, 2, 'S');
+    doc.setLineWidth(0.2);
+    doc.setDrawColor(0);
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(200, 0, 0);
+    doc.text(`Valido por 6 (seis) MESES. (${fechaVencStr})`, pageW / 2, y + 10, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
+    y += 22;
+
+    // ── QR Code ──
+    const qrData = JSON.stringify({
+      g: (d.GUID || '').trim(),
+      f: fechaDev,
+      h: horaDev,
+      m: d.TOTAL || 0,
+      nc: d.NotaCreditoNumero ? (d.NotaCreditoNumero || '').trim() : undefined,
+      v: fechaVencStr,
+    });
+
+    const qr = qrcode(0, 'M');
+    qr.addData(qrData);
+    qr.make();
+    const qrSize = 40;
+    const qrX = (pageW - qrSize) / 2;
+    const qrImg = qr.createDataURL(4, 0);
+    doc.addImage(qrImg, 'PNG', qrX, y, qrSize, qrSize);
+    y += qrSize + 5;
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Escanee el QR para verificar este comprobante', pageW / 2, y, { align: 'center' });
+
+    // Abrir en nueva ventana
+    const pdfBlob = doc.output('blob');
+    const url = URL.createObjectURL(pdfBlob);
+    window.open(url, '_blank');
+  } catch (err) {
+    ShowToast('Error', 'No se pudo generar el comprobante: ' + err.message, 'error');
+  }
+}
+
+// ── Helpers para formato Clarion en PDF ──
+function ClarionToDate(clarionDate) {
+  const base = new Date(1800, 11, 28);
+  return new Date(base.getTime() + clarionDate * 86400000);
+}
+
+function ClarionToDateStr(clarionDate) {
+  if (!clarionDate) return '';
+  return ClarionToDate(clarionDate).toLocaleDateString('es-AR');
+}
+
+function ClarionTimeToStr(clarionTime) {
+  if (!clarionTime) return '';
+  const totalSecs = Math.floor(clarionTime / 100);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 // ============================================================================
@@ -2767,6 +3035,7 @@ async function BuscarGastos() {
 const Compra = {
   items: [],
   proveedorSeleccionado: null,
+  condiciones: [],
 
   Reset() {
     Compra.items = [];
@@ -2835,6 +3104,7 @@ const Compra = {
       color: mov ? (mov.COLOR || '').trim() : '',
       cantidad: 1,
       precioUnitario: precio,
+      estado: 'NUEVO',
     });
     RenderCompraItems();
     const input = document.getElementById('compraSearch');
@@ -2848,8 +3118,9 @@ const Compra = {
   },
 };
 
-function RenderCompras(container) {
+async function RenderCompras(container) {
   Compra.Reset();
+  try { Compra.condiciones = await API.GetCondicionArticulos(); } catch (_) { Compra.condiciones = [{ ESTADO: 'NUEVO' }]; }
   container.innerHTML = `
     <div class="fade-in">
       <h4 class="mb-3"><i class="bi bi-truck me-2"></i>Compras</h4>
@@ -2903,13 +3174,13 @@ function RenderCompras(container) {
 
               <table class="table table-hover">
                 <thead class="table-light">
-                  <tr><th>Codigo</th><th>Descripcion</th><th>Talle</th><th>Color</th><th class="text-center">Cant.</th><th class="text-end">P.Costo</th><th class="text-end">Subtotal</th><th></th></tr>
+                  <tr><th>Codigo</th><th>Descripcion</th><th>Talle</th><th>Color</th><th>Estado</th><th class="text-center">Cant.</th><th class="text-end">P.Costo</th><th class="text-end">Subtotal</th><th></th></tr>
                 </thead>
                 <tbody id="compraItemsBody">
-                  <tr><td colspan="8" class="text-center text-muted py-3">Sin articulos</td></tr>
+                  <tr><td colspan="9" class="text-center text-muted py-3">Sin articulos</td></tr>
                 </tbody>
                 <tfoot>
-                  <tr class="table-success"><th colspan="6" class="text-end">TOTAL:</th><th class="text-end fw-bold" id="compraTotalFooter">$0.00</th><th></th></tr>
+                  <tr class="table-success"><th colspan="7" class="text-end">TOTAL:</th><th class="text-end fw-bold" id="compraTotalFooter">$0.00</th><th></th></tr>
                 </tfoot>
               </table>
 
@@ -2997,19 +3268,29 @@ function RenderArticulosSugeridosCompra(articulos) {
 function RenderCompraItems() {
   const body = document.getElementById('compraItemsBody');
   if (Compra.items.length === 0) {
-    body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Sin articulos</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">Sin articulos</td></tr>';
     document.getElementById('compraTotalFooter').textContent = '$0.00';
   } else {
     let total = 0;
     body.innerHTML = Compra.items.map((item, i) => {
       const subtotal = item.cantidad * item.precioUnitario;
       total += subtotal;
+      const estadoOpts = Compra.condiciones.map(c => {
+        const est = (c.ESTADO || '').trim();
+        return `<option value="${est}" ${item.estado === est ? 'selected' : ''}>${est}</option>`;
+      }).join('');
       return `
         <tr>
           <td><code>${item.codigoArticulo}</code></td>
           <td>${item.descripcion}</td>
           <td>${item.talle || '-'}</td>
           <td>${item.color || '-'}</td>
+          <td>
+            <select class="form-select form-select-sm" style="width:120px"
+              onchange="Compra.items[${i}].estado = this.value;">
+              ${estadoOpts}
+            </select>
+          </td>
           <td class="text-center">
             <input type="number" class="form-control form-control-sm qty-input" value="${item.cantidad}" min="1"
               onchange="Compra.items[${i}].cantidad = parseInt(this.value) || 1; RenderCompraItems();">
@@ -3031,7 +3312,9 @@ async function BuscarProveedoresCompra() {
   const texto = (document.getElementById('compraProvSearch').value || '').trim();
   if (!texto) return;
   try {
-    const proveedores = await API.GetProveedores(texto);
+    const sucActual = State.sucursales.find(s => s.GUID === State.sucursalActual);
+    const guidConfig = sucActual ? (sucActual.GUIDCONFIGURACION || '').trim() : '';
+    const proveedores = await API.GetProveedores(texto, guidConfig);
     const div = document.getElementById('compraProvLista');
     if (proveedores.length === 0) {
       div.innerHTML = '<small class="text-danger">No se encontraron proveedores</small>';
@@ -3067,6 +3350,8 @@ function SeleccionarProveedorCompra(guid, nombre, cuit) {
 async function ConfirmarCompra() {
   if (!Compra.proveedorSeleccionado) { ShowToast('Aviso', 'Seleccione un proveedor', 'error'); return; }
   if (Compra.items.length === 0) { ShowToast('Aviso', 'Agregue al menos un articulo', 'info'); return; }
+  const sinEstado = Compra.items.find(item => !item.estado || !item.estado.trim());
+  if (sinEstado) { ShowToast('Aviso', `El articulo "${sinEstado.codigoArticulo}" no tiene estado asignado`, 'error'); return; }
 
   try {
     const result = await API.CreateCompra({
@@ -3168,24 +3453,27 @@ function RenderBancos(container) {
         <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabCuentas">Cuentas Bancarias</a></li>
         <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabConceptos">Conceptos</a></li>
         <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabHomologacion">Conceptos por Banco</a></li>
+        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabTCPagos"><i class="bi bi-credit-card me-1"></i>Tarjetas / TC Pagos</a></li>
       </ul>
       <div class="tab-content pt-3">
         <div class="tab-pane fade show active" id="tabBancos"><div id="contenidoBancos"></div></div>
         <div class="tab-pane fade" id="tabCuentas"><div id="contenidoCuentas"></div></div>
         <div class="tab-pane fade" id="tabConceptos"><div id="contenidoConceptos"></div></div>
         <div class="tab-pane fade" id="tabHomologacion"><div id="contenidoHomologacion"></div></div>
+        <div class="tab-pane fade" id="tabTCPagos"><div id="contenidoTCPagos"></div></div>
       </div>
     </div>
   `;
   LoadBancos();
 
-  document.querySelectorAll('#tabBancos, #tabCuentas, #tabConceptos, #tabHomologacion').forEach(tab => {
+  document.querySelectorAll('#tabBancos, #tabCuentas, #tabConceptos, #tabHomologacion, #tabTCPagos').forEach(tab => {
     const el = document.querySelector(`a[href="#${tab.id}"]`);
     el.addEventListener('shown.bs.tab', () => {
       if (tab.id === 'tabBancos') LoadBancos();
       if (tab.id === 'tabCuentas') LoadBancosCuentas();
       if (tab.id === 'tabConceptos') LoadBancosConceptos();
       if (tab.id === 'tabHomologacion') LoadConceptosPorBanco();
+      if (tab.id === 'tabTCPagos') LoadTCPagos();
     });
   });
 }
@@ -3354,7 +3642,7 @@ async function ShowFormCuenta(guid) {
   const sucOpts = sucursales.map(s => `<option value="${(s.NOMBRE || '').trim()}" ${(s.NOMBRE || '').trim() === (data.SUCURSAL || '').trim() ? 'selected' : ''}>${(s.NOMBRE || '').trim()}</option>`).join('');
 
   // Determinar si el banco seleccionado es tipo Caja Diaria
-  const bancoSel = bancos.find(b => b.GUID.trim() === (data.GUIDBANCO || '').trim());
+  const bancoSel = bancos.find(b => b.GUID.trim() === (data.GUIDBANCOS || '').trim());
   const esCajaDiaria = bancoSel && (bancoSel.TIPOCUENTA || '').trim().toUpperCase().startsWith('CAJA');
 
   container.innerHTML = `
@@ -3366,7 +3654,7 @@ async function ShowFormCuenta(guid) {
             <label class="form-label">Banco</label>
             <select class="form-select" id="fcGuidBanco" onchange="OnBancoCuentaChange()">
               <option value="">Seleccionar...</option>
-              ${bancos.map(b => `<option value="${b.GUID.trim()}" data-tipocuenta="${(b.TIPOCUENTA || '').trim()}" ${b.GUID.trim() === (data.GUIDBANCO || '').trim() ? 'selected' : ''}>${(b.BANCO || '').trim()}</option>`).join('')}
+              ${bancos.map(b => `<option value="${b.GUID.trim()}" data-tipocuenta="${(b.TIPOCUENTA || '').trim()}" ${b.GUID.trim() === (data.GUIDBANCOS || '').trim() ? 'selected' : ''}>${(b.BANCO || '').trim()}</option>`).join('')}
             </select>
           </div>
           <div class="col-md-2"><label class="form-label">Tipo Cuenta</label><input type="text" class="form-control" id="fcTipoCuenta" value="${(data.TIPOCUENTA || '').trim()}"></div>
@@ -3574,7 +3862,7 @@ async function FiltrarHomologacion() {
 async function ShowFormHomologacion(guid) {
   const container = document.getElementById('formHomologacionContainer');
   const [bancos, conceptos] = await Promise.all([API.GetBancos(), API.GetBancosConceptos()]);
-  let data = { GUIDBANCO: '', GUIDCONCEPTOBANCO: '', CODIGOCONCEPTOSEGUNBANCO: '', DESCRIPCIONSEGUNBANCO: '' };
+  let data = { GUIDBANCOS: '', GUIDCONCEPTOBANCO: '', CODIGOCONCEPTOSEGUNBANCO: '', DESCRIPCIONSEGUNBANCO: '' };
   if (guid) {
     try { data = await API.GetConceptoPorBancoByGuid(guid); } catch (e) { ShowToast('Error', e.message, 'error'); return; }
   }
@@ -3587,7 +3875,7 @@ async function ShowFormHomologacion(guid) {
             <label class="form-label">Banco</label>
             <select class="form-select" id="fhGuidBanco">
               <option value="">Seleccionar...</option>
-              ${bancos.map(b => `<option value="${b.GUID.trim()}" ${b.GUID.trim() === (data.GUIDBANCO || '').trim() ? 'selected' : ''}>${(b.BANCO || '').trim()}</option>`).join('')}
+              ${bancos.map(b => `<option value="${b.GUID.trim()}" ${b.GUID.trim() === (data.GUIDBANCOS || '').trim() ? 'selected' : ''}>${(b.BANCO || '').trim()}</option>`).join('')}
             </select>
           </div>
           <div class="col-md-3">
@@ -3631,5 +3919,244 @@ async function EliminarHomologacion(guid) {
     await API.DeleteConceptoPorBanco(guid);
     ShowToast('Homologacion', 'Eliminada', 'success');
     LoadConceptosPorBanco();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+// ── TCPagos (Tarjetas / Medios de Pago) ─────────────────────────────────────
+async function LoadTCPagos() {
+  const div = document.getElementById('contenidoTCPagos');
+  try {
+    const tcpagos = await API.GetTCPagos();
+    div.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <span class="text-muted">${tcpagos.length} medio(s) de pago</span>
+        <button class="btn btn-primary btn-sm" onclick="ShowFormTCPago()"><i class="bi bi-plus-circle me-1"></i>Nuevo Medio de Pago</button>
+      </div>
+      <div id="formTCPagoContainer"></div>
+      <div class="accordion" id="accordionTCPagos">
+        ${tcpagos.map(tc => {
+          const guid = tc.GUID.trim();
+          const nombre = (tc.TIPO_COMPROBANTE || '').trim();
+          return `
+            <div class="accordion-item">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#tcpago_${guid}">
+                  <div class="d-flex align-items-center gap-3 w-100">
+                    <strong>${nombre}</strong>
+                    <span class="badge bg-secondary">${(tc.ABREVIADO || '').trim()}</span>
+                    ${tc.INTERES > 0 ? `<small class="text-warning">Int: ${tc.INTERES}%</small>` : ''}
+                    <small class="text-muted ms-auto me-3">N&ordm; Comercio: ${(tc.NUMERO_COMERCIO || '').trim() || '-'}</small>
+                  </div>
+                </button>
+              </h2>
+              <div id="tcpago_${guid}" class="accordion-collapse collapse" data-bs-parent="#accordionTCPagos">
+                <div class="accordion-body">
+                  <div class="d-flex justify-content-between mb-3">
+                    <div>
+                      <small class="text-muted">Tel: ${(tc.TELEFONO || '').trim() || '-'} | Obs: ${(tc.OBSERVACIONES || '').trim() || '-'}</small>
+                    </div>
+                    <div class="d-flex gap-1">
+                      <button class="btn btn-outline-primary btn-sm" onclick="ShowFormTCPago('${guid}')"><i class="bi bi-pencil me-1"></i>Editar</button>
+                      <button class="btn btn-outline-danger btn-sm" onclick="EliminarTCPago('${guid}')"><i class="bi bi-trash me-1"></i>Eliminar</button>
+                    </div>
+                  </div>
+                  <h6 class="fw-semibold"><i class="bi bi-list-ol me-1"></i>Planes de Cuotas</h6>
+                  <div id="planesContainer_${guid}">
+                    <div class="text-muted small">Cargando planes...</div>
+                  </div>
+                  <button class="btn btn-outline-success btn-sm mt-2" onclick="ShowFormPlan('${guid}')"><i class="bi bi-plus me-1"></i>Nuevo Plan</button>
+                  <div id="formPlanContainer_${guid}"></div>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    // Cargar planes al expandir cada accordion
+    document.querySelectorAll('#accordionTCPagos .accordion-collapse').forEach(el => {
+      el.addEventListener('shown.bs.collapse', () => {
+        const guid = el.id.replace('tcpago_', '');
+        LoadPlanesTCPago(guid);
+      });
+    });
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+async function LoadPlanesTCPago(guidTcPago) {
+  const div = document.getElementById(`planesContainer_${guidTcPago}`);
+  try {
+    const planes = await API.GetTCPagosPlanes(guidTcPago);
+    if (planes.length === 0) {
+      div.innerHTML = '<small class="text-muted">Sin planes configurados</small>';
+      return;
+    }
+    div.innerHTML = `
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>Nombre</th><th class="text-center">Cuotas</th><th class="text-end">Inter&eacute;s %</th><th class="text-end">Coeficiente</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${planes.map(p => `
+            <tr>
+              <td>${(p.NOMBRECOMPROBANTEPAGO || '').trim()}</td>
+              <td class="text-center">${p.CUOTAS}</td>
+              <td class="text-end">${p.INTERES || 0}%</td>
+              <td class="text-end">${p.COEFICIENTE || 0}</td>
+              <td class="text-end">
+                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormPlan('${guidTcPago}', '${p.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" onclick="EliminarPlan('${p.GUID.trim()}', '${guidTcPago}')"><i class="bi bi-trash"></i></button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) { div.innerHTML = `<small class="text-danger">${err.message}</small>`; }
+}
+
+async function ShowFormTCPago(guid) {
+  const container = document.getElementById('formTCPagoContainer');
+  let data = { TIPO_COMPROBANTE: '', ABREVIADO: '', INTERES: 0, COEFICIENTE: 0, NUMERO_COMERCIO: '', TELEFONO: '', OBSERVACIONES: '', TIPO: 0, DATOSADICIONAL: 0 };
+  if (guid) {
+    try { data = await API.GetTCPagoByGuid(guid); } catch (e) { ShowToast('Error', e.message, 'error'); return; }
+  }
+  container.innerHTML = `
+    <div class="card border-primary mb-3">
+      <div class="card-body">
+        <h6>${guid ? 'Editar' : 'Nuevo'} Medio de Pago</h6>
+        <div class="row g-2">
+          <div class="col-md-3">
+            <label class="form-label">Nombre <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="tcNombre" value="${(data.TIPO_COMPROBANTE || '').trim()}" maxlength="40">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label">Abrev.</label>
+            <input type="text" class="form-control" id="tcAbreviado" value="${(data.ABREVIADO || '').trim()}" maxlength="2">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">N&ordm; Comercio</label>
+            <input type="text" class="form-control" id="tcNumComercio" value="${(data.NUMERO_COMERCIO || '').trim()}" maxlength="40">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Inter&eacute;s %</label>
+            <input type="number" class="form-control" id="tcInteres" value="${data.INTERES || 0}" step="0.01">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Coeficiente</label>
+            <input type="number" class="form-control" id="tcCoeficiente" value="${data.COEFICIENTE || 0}" step="0.0000001">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Tel&eacute;fono</label>
+            <input type="text" class="form-control" id="tcTelefono" value="${(data.TELEFONO || '').trim()}" maxlength="60">
+          </div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-md-6">
+            <label class="form-label">Observaciones</label>
+            <input type="text" class="form-control" id="tcObservaciones" value="${(data.OBSERVACIONES || '').trim()}" maxlength="254">
+          </div>
+          <div class="col-md-3 d-flex align-items-end gap-2">
+            <button class="btn btn-success btn-sm" onclick="GuardarTCPago('${guid || ''}')"><i class="bi bi-check me-1"></i>Guardar</button>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('formTCPagoContainer').innerHTML=''">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function GuardarTCPago(guid) {
+  const payload = {
+    tipoComprobante: document.getElementById('tcNombre').value.trim(),
+    abreviado: document.getElementById('tcAbreviado').value.trim(),
+    interes: parseFloat(document.getElementById('tcInteres').value) || 0,
+    coeficiente: parseFloat(document.getElementById('tcCoeficiente').value) || 0,
+    numeroComercio: document.getElementById('tcNumComercio').value.trim(),
+    telefono: document.getElementById('tcTelefono').value.trim(),
+    observaciones: document.getElementById('tcObservaciones').value.trim(),
+  };
+  if (!payload.tipoComprobante) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
+  try {
+    if (guid) { await API.UpdateTCPago(guid, payload); }
+    else { await API.CreateTCPago(payload); }
+    ShowToast('TC Pago', guid ? 'Actualizado' : 'Creado', 'success');
+    document.getElementById('formTCPagoContainer').innerHTML = '';
+    LoadTCPagos();
+    State.tcPagos = await API.GetTCPagos();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+async function EliminarTCPago(guid) {
+  if (!confirm('Eliminar este medio de pago?')) return;
+  try {
+    await API.DeleteTCPago(guid);
+    ShowToast('TC Pago', 'Eliminado', 'success');
+    LoadTCPagos();
+    State.tcPagos = await API.GetTCPagos();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+// ── Planes de cuotas ────────────────────────────────────────────────────────
+async function ShowFormPlan(guidTcPago, guidPlan) {
+  const container = document.getElementById(`formPlanContainer_${guidTcPago}`);
+  let data = { NOMBRECOMPROBANTEPAGO: '', CUOTAS: 1, INTERES: 0, COEFICIENTE: 0 };
+  if (guidPlan) {
+    const planes = await API.GetTCPagosPlanes(guidTcPago);
+    data = planes.find(p => p.GUID.trim() === guidPlan) || data;
+  }
+  container.innerHTML = `
+    <div class="card border-success mt-2">
+      <div class="card-body py-2">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label small">Nombre</label>
+            <input type="text" class="form-control form-control-sm" id="planNombre_${guidTcPago}" value="${(data.NOMBRECOMPROBANTEPAGO || '').trim()}" maxlength="40">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Cuotas <span class="text-danger">*</span></label>
+            <input type="number" class="form-control form-control-sm" id="planCuotas_${guidTcPago}" value="${data.CUOTAS || 1}" min="1">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Inter&eacute;s %</label>
+            <input type="number" class="form-control form-control-sm" id="planInteres_${guidTcPago}" value="${data.INTERES || 0}" step="0.01">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Coeficiente</label>
+            <input type="number" class="form-control form-control-sm" id="planCoeficiente_${guidTcPago}" value="${data.COEFICIENTE || 0}" step="0.00001">
+          </div>
+          <div class="col-md-3 d-flex gap-1">
+            <button class="btn btn-success btn-sm" onclick="GuardarPlan('${guidTcPago}', '${guidPlan || ''}')"><i class="bi bi-check"></i> Guardar</button>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('formPlanContainer_${guidTcPago}').innerHTML=''">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function GuardarPlan(guidTcPago, guidPlan) {
+  const payload = {
+    nombreComprobantePago: document.getElementById(`planNombre_${guidTcPago}`).value.trim(),
+    cuotas: parseInt(document.getElementById(`planCuotas_${guidTcPago}`).value) || 1,
+    interes: parseFloat(document.getElementById(`planInteres_${guidTcPago}`).value) || 0,
+    coeficiente: parseFloat(document.getElementById(`planCoeficiente_${guidTcPago}`).value) || 0,
+  };
+  if (payload.cuotas < 1) { ShowToast('Error', 'Cuotas debe ser al menos 1', 'error'); return; }
+  try {
+    if (guidPlan) { await API.UpdateTCPagoPlan(guidPlan, payload); }
+    else { await API.CreateTCPagoPlan(guidTcPago, payload); }
+    ShowToast('Plan', guidPlan ? 'Actualizado' : 'Creado', 'success');
+    document.getElementById(`formPlanContainer_${guidTcPago}`).innerHTML = '';
+    LoadPlanesTCPago(guidTcPago);
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+async function EliminarPlan(guidPlan, guidTcPago) {
+  if (!confirm('Eliminar este plan?')) return;
+  try {
+    await API.DeleteTCPagoPlan(guidPlan);
+    ShowToast('Plan', 'Eliminado', 'success');
+    LoadPlanesTCPago(guidTcPago);
   } catch (err) { ShowToast('Error', err.message, 'error'); }
 }

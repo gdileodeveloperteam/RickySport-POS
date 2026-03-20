@@ -74,13 +74,17 @@ const API = (function () {
   }
 
   // TCPagos
-  async function GetTCPagos() {
-    return Request('/tcpagos');
-  }
+  async function GetTCPagos() { return Request('/tcpagos'); }
+  async function GetTCPagoByGuid(guid) { return Request(`/tcpagos/${guid}`); }
+  async function CreateTCPago(data) { return Request('/tcpagos', { method: 'POST', body: JSON.stringify(data) }); }
+  async function UpdateTCPago(guid, data) { return Request(`/tcpagos/${guid}`, { method: 'PUT', body: JSON.stringify(data) }); }
+  async function DeleteTCPago(guid) { return Request(`/tcpagos/${guid}`, { method: 'DELETE' }); }
 
-  async function GetTCPagosPlanes(guid) {
-    return Request(`/tcpagos/${guid}/planes`);
-  }
+  // TCPagosPlanes
+  async function GetTCPagosPlanes(guid) { return Request(`/tcpagos/${guid}/planes`); }
+  async function CreateTCPagoPlan(guidTcPago, data) { return Request(`/tcpagos/${guidTcPago}/planes`, { method: 'POST', body: JSON.stringify(data) }); }
+  async function UpdateTCPagoPlan(guid, data) { return Request(`/tcpagos/planes/${guid}`, { method: 'PUT', body: JSON.stringify(data) }); }
+  async function DeleteTCPagoPlan(guid) { return Request(`/tcpagos/planes/${guid}`, { method: 'DELETE' }); }
 
   // Ventas
   async function CreateVenta(data) {
@@ -125,6 +129,14 @@ const API = (function () {
   // Devoluciones
   async function CreateDevolucion(data) {
     return Request('/devoluciones', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async function GetDevolucionDetalle(guid) {
+    return Request(`/devoluciones/${guid}`);
+  }
+
+  async function GetCreditosCliente(guidCliente) {
+    return Request(`/devoluciones/creditos/${guidCliente}`);
   }
 
   // Cambios de mercaderia (atomico: cambio + venta + cobro)
@@ -186,9 +198,11 @@ const API = (function () {
   }
 
   // Proveedores
-  async function GetProveedores(search) {
-    const q = search ? `?search=${encodeURIComponent(search)}` : '';
-    return Request(`/proveedores${q}`);
+  async function GetProveedores(search, guidConfiguracion) {
+    const q = new URLSearchParams();
+    if (search) q.set('search', search);
+    if (guidConfiguracion) q.set('guidConfiguracion', guidConfiguracion);
+    return Request(`/proveedores?${q.toString()}`);
   }
 
   // Gastos
@@ -204,6 +218,11 @@ const API = (function () {
     if (params.hasta) q.set('hasta', params.hasta);
     if (params.guidSucursal) q.set('guidSucursal', params.guidSucursal);
     return Request(`/gastos?${q.toString()}`);
+  }
+
+  // Condicion Articulos
+  async function GetCondicionArticulos() {
+    return Request('/condicion-articulos');
   }
 
   // Compras
@@ -236,12 +255,14 @@ const API = (function () {
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
     GetClientes, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte,
     GetSucursales, GetVendedores,
-    GetTCPagos, GetTCPagosPlanes,
+    GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
+    GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,
     CreateVenta, GetVentas, GetVentaDetalle, GetResumenPagos, GetVentasPorSucursal, GetTotalesDevCambios,
-    CreateDevolucion, CreateCambioConVenta,
+    CreateDevolucion, GetDevolucionDetalle, GetCreditosCliente, CreateCambioConVenta,
     CreateTransferencia, GetTransferencias, GetTransferenciaDetalle,
     GetEmpleados, GetProveedores,
     CreateGasto, CreateAdelanto, GetGastos,
+    GetCondicionArticulos,
     CreateCompra, GetCompras, GetCompraDetalle,
     GetBancos, GetBancoByGuid, CreateBanco, UpdateBanco, DeleteBanco,
     GetBancosConceptos, GetBancoConceptoByGuid, CreateBancoConcepto, UpdateBancoConcepto, DeleteBancoConcepto,

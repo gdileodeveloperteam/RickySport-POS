@@ -184,6 +184,35 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, nombre, cu
             @guidCliente, @guidProveedor, @guidEmpleado, @ts, @sts)
         `);
 
+      // Si pago es Credito Devolucion, consumir credito
+      if (pago.tipo === 'CREDITO_DEV' && pago.guidCreditoDevolucion) {
+        const guidUso = newGuid();
+        await tx.request()
+          .input('guid', sql.Char(16), guidUso)
+          .input('guidCredito', sql.Char(16), pago.guidCreditoDevolucion)
+          .input('guidRemito', sql.Char(16), guidRemito)
+          .input('guidFormaPago', sql.Char(16), guidPago)
+          .input('monto', sql.Decimal(13, 3), pago.importe)
+          .input('fecha', sql.Date, new Date())
+          .input('ts', sql.Float, ts)
+          .input('sts', sql.Float, ts)
+          .query(`
+            INSERT INTO CreditosDevolucionesUsos (GUID, GUIDCREDITOSDEVOLUCIONES, GUIDREMITOS,
+              GUIDFORMAPAGOS, MONTOUSADO, FECHA, ts, sts)
+            VALUES (@guid, @guidCredito, @guidRemito, @guidFormaPago, @monto, @fecha, @ts, @sts)
+          `);
+
+        await tx.request()
+          .input('guidCredito', sql.Char(16), pago.guidCreditoDevolucion)
+          .input('monto', sql.Decimal(13, 3), pago.importe)
+          .query(`
+            UPDATE CreditosDevoluciones
+            SET MONTOUSADO = MONTOUSADO + @monto,
+                ESTADO = CASE WHEN (MONTOUSADO + @monto) >= MONTOORIGINAL THEN 'CONSUMIDO' ELSE 'ACTIVO' END
+            WHERE GUID = @guidCredito
+          `);
+      }
+
       // Si pago es Cuenta Corriente, actualizar saldo cliente
       if (pago.tipo === 'CTA_CTE' && guidCliente && guidCliente !== EMPTY_GUID) {
         await tx.request()
@@ -195,9 +224,17 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, nombre, cu
         await tx.request()
           .input('guid', sql.Char(16), guidMovCli)
           .input('fecha', sql.Decimal(7), dateToClarion())
+          .input('cantidad', sql.SmallInt, 0)
+          .input('articulo', sql.VarChar(255), '')
           .input('descripcion', sql.VarChar(2000), `Venta - Cta. Cte.`)
+          .input('talle', sql.Decimal(7, 2), 0)
+          .input('precioUnitario', sql.Decimal(11, 2), 0)
+          .input('iva', sql.Decimal(5, 2), 0)
           .input('debe', sql.Decimal(13, 3), pago.importe)
           .input('haber', sql.Decimal(13, 3), 0)
+          .input('saldo', sql.Decimal(13, 3), 0)
+          .input('pago', sql.Char(10), '')
+          .input('sucursal', sql.TinyInt, 0)
           .input('guidCliente', sql.Char(16), guidCliente)
           .input('guidArticulo', sql.Char(16), EMPTY_GUID)
           .input('guidRemito', sql.Char(16), guidRemito)
@@ -209,15 +246,18 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, nombre, cu
           .input('guidRemitoCambio', sql.Char(16), EMPTY_GUID)
           .input('ts', sql.Float, ts)
           .input('sts', sql.Float, ts)
+          .input('dts', sql.Float, 0)
           .query(`
-            INSERT INTO MovimientoClientes (GUID, FECHA, DESCRIPCION, DEBE, HABER,
+            INSERT INTO MovimientoClientes (GUID, FECHA, CANTIDAD, ARTICULO, DESCRIPCION, TALLE,
+              PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
               GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
               GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
-              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts)
-            VALUES (@guid, @fecha, @descripcion, @debe, @haber,
+              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+            VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
+              @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
               @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
               @guidCaja, @guidBanco, @guidMovBanco,
-              @guidRemitoDev, @guidRemitoCambio, @ts, @sts)
+              @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
           `);
       }
     }

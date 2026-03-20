@@ -159,7 +159,12 @@
                 <option value="TARJETA">Tarjeta</option>
                 <option value="TRANSFERENCIA">Transferencia</option>
                 <option value="CTA_CTE">Cuenta Corriente</option>
+                <option value="CREDITO_DEV">Credito Devolucion</option>
               </select>
+            </div>
+            <div class="col-md-3 d-none" id="divCreditoDevOpciones">
+              <label class="form-label fw-semibold">Credito disponible</label>
+              <select id="pagoCreditoDev" class="form-select"></select>
             </div>
             <div class="col-md-3 d-none" id="divTarjetaOpciones">
               <label class="form-label fw-semibold">Tarjeta</label>
@@ -234,6 +239,8 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/js/api.js"></script>

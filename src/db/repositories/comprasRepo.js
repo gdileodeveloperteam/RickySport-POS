@@ -104,7 +104,7 @@ async function CreateCompra({ guidProveedor, nombreProveedor, guidSucursal, item
         .input('color', sql.VarChar(255), item.color || '')
         .input('ingreso', sql.Float, item.cantidad)
         .input('egreso', sql.Float, 0)
-        .input('estado', sql.VarChar(20), 'NUEVO')
+        .input('estado', sql.VarChar(20), item.estado || 'NUEVO')
         .input('fecha', sql.Date, new Date())
         .input('tipo', sql.VarChar(20), 'COMPRA')
         .input('ts', sql.Float, ts)

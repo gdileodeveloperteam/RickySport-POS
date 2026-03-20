@@ -1,16 +1,20 @@
 const { getPool, sql } = require('../pool');
 
-async function GetAll(search) {
+async function GetAll(search, guidConfiguracion) {
   const pool = await getPool();
   const request = pool.request();
-  let where = '(dts IS NULL OR dts = 0)';
+  let where = '(p.dts IS NULL OR p.dts = 0)';
   if (search) {
     request.input('search', sql.VarChar(255), `%${search}%`);
-    where += ' AND (NOMBRE LIKE @search OR CUIT LIKE @search OR RUBRO LIKE @search)';
+    where += ' AND (p.NOMBRE LIKE @search OR p.CUIT LIKE @search OR p.RUBRO LIKE @search)';
+  }
+  if (guidConfiguracion) {
+    request.input('guidConfig', sql.Char(16), guidConfiguracion);
+    where += ' AND p.GUIDCONFIGURACION = @guidConfig';
   }
   const result = await request.query(`
-    SELECT GUID, NOMBRE, CUIT, RUBRO, TELEFONO, CELULAR, EMAIL, DIRECCION, LOCALIDAD, ACTIVO
-    FROM Proveedores WHERE ${where} ORDER BY NOMBRE
+    SELECT p.GUID, p.NOMBRE, p.CUIT, p.RUBRO, p.TELEFONO, p.CELULAR, p.EMAIL, p.DIRECCION, p.LOCALIDAD, p.ACTIVO
+    FROM Proveedores p WHERE ${where} ORDER BY p.NOMBRE
   `);
   return result.recordset;
 }

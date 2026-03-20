@@ -4,16 +4,16 @@ const { newGuid } = require('../../utils/guidHelper');
 async function GetAll(guidBanco) {
   const pool = await getPool();
   let query = `
-    SELECT cpb.GUID, cpb.ID, cpb.GUIDBANCO, cpb.GUIDCONCEPTOBANCO,
+    SELECT cpb.GUID, cpb.ID, cpb.GUIDBANCOS, cpb.GUIDCONCEPTOBANCO,
            cpb.CODIGOCONCEPTOSEGUNBANCO, cpb.DESCRIPCIONSEGUNBANCO,
            b.BANCO AS NombreBanco, bc.DESCRIPCION AS ConceptoDescripcion
     FROM ConceptosPorBanco cpb
-    LEFT JOIN Bancos b ON cpb.GUIDBANCO = b.GUID AND (b.dts IS NULL OR b.dts = 0)
+    LEFT JOIN Bancos b ON cpb.GUIDBANCOS = b.GUID AND (b.dts IS NULL OR b.dts = 0)
     LEFT JOIN BancosConceptos bc ON cpb.GUIDCONCEPTOBANCO = bc.GUID
   `;
   const request = pool.request();
   if (guidBanco) {
-    query += ` WHERE cpb.GUIDBANCO = @guidBanco`;
+    query += ` WHERE cpb.GUIDBANCOS = @guidBanco`;
     request.input('guidBanco', sql.Char(16), guidBanco);
   }
   query += ` ORDER BY b.BANCO, bc.DESCRIPCION`;
@@ -28,7 +28,7 @@ async function GetByGuid(guid) {
     .query(`
       SELECT cpb.*, b.BANCO AS NombreBanco, bc.DESCRIPCION AS ConceptoDescripcion
       FROM ConceptosPorBanco cpb
-      LEFT JOIN Bancos b ON cpb.GUIDBANCO = b.GUID AND (b.dts IS NULL OR b.dts = 0)
+      LEFT JOIN Bancos b ON cpb.GUIDBANCOS = b.GUID AND (b.dts IS NULL OR b.dts = 0)
       LEFT JOIN BancosConceptos bc ON cpb.GUIDCONCEPTOBANCO = bc.GUID
       WHERE cpb.GUID = @guid
     `);
@@ -48,7 +48,7 @@ async function Create({ guidBanco, guidConceptoBanco, codigoConceptoSegunBanco, 
     .input('codigoConceptoSegunBanco', sql.VarChar(255), codigoConceptoSegunBanco || null)
     .input('descripcionSegunBanco', sql.VarChar(255), descripcionSegunBanco || null)
     .query(`
-      INSERT INTO ConceptosPorBanco (GUID, ID, GUIDBANCO, GUIDCONCEPTOBANCO, CODIGOCONCEPTOSEGUNBANCO, DESCRIPCIONSEGUNBANCO)
+      INSERT INTO ConceptosPorBanco (GUID, ID, GUIDBANCOS, GUIDCONCEPTOBANCO, CODIGOCONCEPTOSEGUNBANCO, DESCRIPCIONSEGUNBANCO)
       VALUES (@guid, @id, @guidBanco, @guidConceptoBanco, @codigoConceptoSegunBanco, @descripcionSegunBanco)
     `);
   return { guid, id };
@@ -64,7 +64,7 @@ async function Update(guid, { guidBanco, guidConceptoBanco, codigoConceptoSegunB
     .input('descripcionSegunBanco', sql.VarChar(255), descripcionSegunBanco || null)
     .query(`
       UPDATE ConceptosPorBanco
-      SET GUIDBANCO = @guidBanco, GUIDCONCEPTOBANCO = @guidConceptoBanco,
+      SET GUIDBANCOS = @guidBanco, GUIDCONCEPTOBANCO = @guidConceptoBanco,
           CODIGOCONCEPTOSEGUNBANCO = @codigoConceptoSegunBanco, DESCRIPCIONSEGUNBANCO = @descripcionSegunBanco
       WHERE GUID = @guid
     `);
