@@ -670,7 +670,7 @@ async function CreateCambioConVenta({
           `);
 
         // Si pago es CTA_CTE, actualizar saldo cliente
-        if (pago.tipo === 'CTA_CTE' && guidCliente && guidCliente !== EMPTY_GUID) {
+        if (pago._esCtaCte && guidCliente && guidCliente !== EMPTY_GUID) {
           await tx.request()
             .input('guid', sql.Char(16), guidCliente)
             .input('importe', sql.Decimal(13, 3), pago.importe)

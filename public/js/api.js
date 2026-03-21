@@ -46,6 +46,10 @@ const API = (function () {
     return Request(`/clientes${q}`);
   }
 
+  async function CreateCliente(data) {
+    return Request('/clientes', { method: 'POST', body: JSON.stringify(data) });
+  }
+
   async function GetClienteByGuid(guid) {
     return Request(`/clientes/${guid}`);
   }
@@ -240,6 +244,16 @@ const API = (function () {
     return Request(`/compras/${guid}`);
   }
 
+  // TiposCobrosPagos
+  async function GetTiposCobrosPagos(tipoMovimiento) {
+    const q = tipoMovimiento ? `?tipoMovimiento=${encodeURIComponent(tipoMovimiento)}` : '';
+    return Request(`/tipos-cobros-pagos${q}`);
+  }
+  async function GetTipoCobroPagoByGuid(guid) { return Request(`/tipos-cobros-pagos/${guid}`); }
+  async function CreateTipoCobroPago(data) { return Request('/tipos-cobros-pagos', { method: 'POST', body: JSON.stringify(data) }); }
+  async function UpdateTipoCobroPago(guid, data) { return Request(`/tipos-cobros-pagos/${guid}`, { method: 'PUT', body: JSON.stringify(data) }); }
+  async function DeleteTipoCobroPago(guid) { return Request(`/tipos-cobros-pagos/${guid}`, { method: 'DELETE' }); }
+
   // ConceptosPorBanco
   async function GetConceptosPorBanco(guidBanco) {
     const q = guidBanco ? `?guidBanco=${encodeURIComponent(guidBanco)}` : '';
@@ -253,7 +267,7 @@ const API = (function () {
   return {
     Login, GetUsuarios,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
-    GetClientes, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte,
+    GetClientes, CreateCliente, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte,
     GetSucursales, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
     GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,
@@ -268,5 +282,6 @@ const API = (function () {
     GetBancosConceptos, GetBancoConceptoByGuid, CreateBancoConcepto, UpdateBancoConcepto, DeleteBancoConcepto,
     GetBancosCuentas, GetBancoCuentaByGuid, CreateBancoCuenta, UpdateBancoCuenta, DeleteBancoCuenta,
     GetConceptosPorBanco, GetConceptoPorBancoByGuid, CreateConceptoPorBanco, UpdateConceptoPorBanco, DeleteConceptoPorBanco,
+    GetTiposCobrosPagos, GetTipoCobroPagoByGuid, CreateTipoCobroPago, UpdateTipoCobroPago, DeleteTipoCobroPago,
   };
 })();

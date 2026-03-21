@@ -124,7 +124,11 @@
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <input type="text" id="searchCliente" class="form-control mb-3" placeholder="Buscar por nombre, CUIT o documento...">
+          <div class="d-flex gap-2 mb-3">
+            <input type="text" id="searchCliente" class="form-control" placeholder="Buscar por nombre, CUIT o documento...">
+            <button class="btn btn-success text-nowrap" onclick="ToggleFormNuevoCliente()"><i class="bi bi-person-plus me-1"></i>Nuevo</button>
+          </div>
+          <div id="formNuevoClienteContainer" class="d-none mb-3"></div>
           <div id="listaClientes" class="list-group" style="max-height: 400px; overflow-y: auto;"></div>
         </div>
       </div>
@@ -150,31 +154,27 @@
           </div>
           <hr>
 
-          <!-- PASO 1: Tipo de pago -->
+          <!-- PASO 1: Tipo de cobro/pago → Comprobante → Plan -->
           <div class="row g-2 mb-3">
             <div class="col-md-3">
               <label class="form-label fw-semibold">Tipo de Pago</label>
               <select id="pagoTipo" class="form-select" onchange="POS.OnTipoPagoChange()">
-                <option value="EFECTIVO">Efectivo</option>
-                <option value="TARJETA">Tarjeta</option>
-                <option value="TRANSFERENCIA">Transferencia</option>
-                <option value="CTA_CTE">Cuenta Corriente</option>
-                <option value="CREDITO_DEV">Credito Devolucion</option>
               </select>
+            </div>
+            <div class="col-md-3 d-none" id="divComprobante">
+              <label class="form-label fw-semibold">Comprobante</label>
+              <select id="pagoComprobante" class="form-select" onchange="POS.OnComprobanteChange()"></select>
+            </div>
+            <div class="col-md-3 d-none" id="divCuotas">
+              <label class="form-label fw-semibold">Plan/Cuotas</label>
+              <select id="pagoPlan" class="form-select" onchange="POS.OnPlanChange()"></select>
             </div>
             <div class="col-md-3 d-none" id="divCreditoDevOpciones">
               <label class="form-label fw-semibold">Credito disponible</label>
               <select id="pagoCreditoDev" class="form-select"></select>
             </div>
-            <div class="col-md-3 d-none" id="divTarjetaOpciones">
-              <label class="form-label fw-semibold">Tarjeta</label>
-              <select id="pagoTarjeta" class="form-select"></select>
-            </div>
-            <div class="col-md-3 d-none" id="divCuotas">
-              <label class="form-label fw-semibold">Plan/Cuotas</label>
-              <select id="pagoPlan" class="form-select"></select>
-            </div>
           </div>
+          <div id="divRecargoInfo" class="d-none mb-3"></div>
 
           <!-- PASO 2: Cliente (condicional) -->
           <div id="pagoClienteZona" class="mb-3"></div>

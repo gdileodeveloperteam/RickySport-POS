@@ -9,6 +9,10 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.post('/', async (req, res, next) => {
+  try { res.status(201).json(await clientesRepo.Create(req.body)); } catch (err) { next(err); }
+});
+
 router.get('/ctacte', async (req, res, next) => {
   try {
     const data = await clientesRepo.GetCtaCte(req.query.search);

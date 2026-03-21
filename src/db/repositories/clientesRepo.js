@@ -1,4 +1,34 @@
 const { getPool, sql } = require('../pool');
+const { newGuid, tsNow } = require('../../utils/guidHelper');
+
+async function Create({ nombre, documento, cuit, direccion, email, celular, tipoIva, tipoFactura, codigoDocumentoAfip }) {
+  const pool = await getPool();
+  const guid = newGuid();
+  const ts = tsNow();
+  const idResult = await pool.request().query(`SELECT ISNULL(MAX(CODIGO_CLIENTE), 0) + 1 AS Next FROM Clientes`);
+  const codigoCliente = idResult.recordset[0].Next;
+  await pool.request()
+    .input('guid', sql.Char(16), guid)
+    .input('codigoCliente', sql.Int, codigoCliente)
+    .input('nombre', sql.VarChar(255), nombre)
+    .input('documento', sql.VarChar(20), documento || '')
+    .input('cuit', sql.VarChar(20), cuit || '')
+    .input('direccion', sql.VarChar(255), direccion || '')
+    .input('email', sql.VarChar(255), email || '')
+    .input('celular', sql.VarChar(60), celular || '')
+    .input('tipoIva', sql.VarChar(40), tipoIva || 'CONSUMIDOR FINAL')
+    .input('tipoFactura', sql.Char(1), tipoFactura || 'B')
+    .input('codigoDocumentoAfip', sql.SmallInt, codigoDocumentoAfip || 96)
+    .input('ts', sql.Float, ts)
+    .input('sts', sql.Float, ts)
+    .query(`
+      INSERT INTO Clientes (GUID, CODIGO_CLIENTE, NOMBRE, DOCUMENTO, CUIT, DIRECCION, EMAIL, CELULAR,
+        TIPO_IVA, TIPO_FACTURA, CODIGO_DOCUMENTO_AFIP, SALDO, ts, sts)
+      VALUES (@guid, @codigoCliente, @nombre, @documento, @cuit, @direccion, @email, @celular,
+        @tipoIva, @tipoFactura, @codigoDocumentoAfip, 0, @ts, @sts)
+    `);
+  return { guid, codigoCliente };
+}
 
 async function GetAll(search) {
   const pool = await getPool();
@@ -92,4 +122,4 @@ async function UpdateSaldo(guid, nuevoSaldo) {
     .query(`UPDATE Clientes SET SALDO = @saldo WHERE GUID = @guid`);
 }
 
-module.exports = { GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo };
+module.exports = { Create, GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo };

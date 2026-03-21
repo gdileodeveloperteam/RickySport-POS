@@ -8,6 +8,7 @@ const State = {
   sucursales: [],
   vendedores: [],
   tcPagos: [],
+  tiposCobrosPagos: [],
   bancosCuentas: [],
   sucursalActual: null,
   currentSection: 'pos',
@@ -97,7 +98,12 @@ function MakeSortable(tableOrSelector) {
     th.addEventListener('click', () => {
       const tbody = table.querySelector('tbody');
       if (!tbody) return;
-      const rows = Array.from(tbody.querySelectorAll('tr'));
+
+      // Colapsar filas auxiliares (planes, detalles) antes de ordenar — solo hijos directos
+      tbody.querySelectorAll(':scope > tr[id^="planesRow_"]').forEach(r => r.classList.add('d-none'));
+
+      // Solo ordenar filas de datos directas del tbody (excluir filas de planes y filas de tablas anidadas)
+      const rows = Array.from(tbody.querySelectorAll(':scope > tr')).filter(r => !r.id || !r.id.startsWith('planesRow_'));
       if (rows.length <= 1) return;
 
       const asc = !th.classList.contains('sort-asc');
@@ -119,7 +125,18 @@ function MakeSortable(tableOrSelector) {
         return asc ? va.localeCompare(vb, 'es') : vb.localeCompare(va, 'es');
       });
 
-      rows.forEach(r => tbody.appendChild(r));
+      // Re-insertar cada fila de datos seguida de su fila de planes asociada
+      rows.forEach(r => {
+        tbody.appendChild(r);
+        const dataGuid = r.querySelector('button[onclick*="TogglePlanes"]');
+        if (dataGuid) {
+          const guid = dataGuid.getAttribute('onclick').match(/'([^']+)'/)?.[1];
+          if (guid) {
+            const planesRow = document.getElementById('planesRow_' + guid);
+            if (planesRow) tbody.appendChild(planesRow);
+          }
+        }
+      });
     });
   });
 }
@@ -162,10 +179,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function InitApp() {
   try {
-    const [sucursales, vendedores, tcPagos] = await Promise.all([
+    const [sucursales, vendedores, tcPagos, tiposCobrosPagos] = await Promise.all([
       API.GetSucursales(),
       API.GetVendedores(),
       API.GetTCPagos(),
+      API.GetTiposCobrosPagos(),
     ]);
 
     // BancosCuentas se carga aparte para no bloquear si falla
@@ -176,6 +194,7 @@ async function InitApp() {
     State.sucursales = sucursales;
     State.vendedores = vendedores;
     State.tcPagos = tcPagos;
+    State.tiposCobrosPagos = tiposCobrosPagos;
     State.bancosCuentas = bancosCuentas;
 
     const sel = document.getElementById('selectSucursal');
@@ -252,6 +271,7 @@ const App = {
     State.sucursales = [];
     State.vendedores = [];
     State.tcPagos = [];
+    State.tiposCobrosPagos = [];
     State.bancosCuentas = [];
     State.sucursalActual = null;
     State.currentSection = 'pos';
@@ -291,12 +311,14 @@ const POS = {
   pagos: [],
   cliente: null,
   vendedor: null,
+  _totalConRecargo: 0,
 
   Reset() {
     POS.items = [];
     POS.pagos = [];
     POS.cliente = null;
     POS.vendedor = null;
+    POS._totalConRecargo = 0;
     POS.emitirFactura = false;
   },
 
@@ -413,23 +435,53 @@ const POS = {
   emitirFactura: false,
 
   RequiereCliente() {
-    return POS.pagos.some(p => p.tipo !== 'EFECTIVO');
+    return POS.pagos.some(p => !p._esEfectivo);
   },
 
   RequiereFactura() {
-    return POS.pagos.some(p => p.tipo !== 'EFECTIVO' && p.tipo !== 'CTA_CTE' && p.tipo !== 'CREDITO_DEV');
+    return POS.pagos.some(p => !p._esEfectivo && !p._esCtaCte && !p._esCreditoDev);
   },
 
   SoloEfectivoOCtaCte() {
-    return POS.pagos.length > 0 && POS.pagos.every(p => p.tipo === 'EFECTIVO' || p.tipo === 'CTA_CTE' || p.tipo === 'CREDITO_DEV');
+    return POS.pagos.length > 0 && POS.pagos.every(p => p._esEfectivo || p._esCtaCte || p._esCreditoDev);
   },
 
   OnTipoPagoChange() {
+    // Reset cascada al cambiar tipo cobro/pago
+    document.getElementById('pagoComprobante').innerHTML = '';
+    document.getElementById('pagoPlan').innerHTML = '';
+    document.getElementById('divRecargoInfo').classList.add('d-none');
     RenderPagosModal();
   },
 
+  OnComprobanteChange() {
+    document.getElementById('pagoPlan').innerHTML = '';
+    RenderPagosModal();
+  },
+
+  OnPlanChange() {
+    const baseTotal = POS._cambioData && POS._cambioData.diferencia > 0 ? POS._cambioData.diferencia : POS.GetTotal();
+    AplicarRecargo(baseTotal);
+  },
+
   AgregarPago() {
-    const tipo = document.getElementById('pagoTipo').value;
+    const tipoSel = GetTipoCobroPagoSel();
+    if (!tipoSel) { ShowToast('Aviso', 'Seleccione un tipo de pago', 'info'); return; }
+
+    const tipoMov = (tipoSel.TIPOMOVIMIENTO || '').trim();
+    const tipoDescrip = (tipoSel.DESCRIPCION || '').trim();
+    const esEfectivo = tipoDescrip.toUpperCase() === 'EFECTIVO';
+    const esCtaCte = tipoMov === 'X';
+    const esCreditoDev = tipoDescrip.toUpperCase().indexOf('CREDITO') >= 0 && tipoDescrip.toUpperCase().indexOf('DEV') >= 0;
+
+    const compSel = GetComprobanteSel();
+    const selComp = document.getElementById('pagoComprobante');
+    // Si hay comprobantes disponibles, obligar a seleccionar uno
+    if (selComp.options.length > 1 && !compSel) {
+      ShowToast('Aviso', 'Seleccione un comprobante de pago', 'info');
+      return;
+    }
+
     const importe = parseFloat(document.getElementById('pagoImporte').value) || 0;
     if (importe <= 0) { ShowToast('Aviso', 'Ingrese un importe válido', 'info'); return; }
 
@@ -439,17 +491,17 @@ const POS = {
       return;
     }
 
-    if (tipo === 'CTA_CTE' && !POS.cliente) {
+    if (esCtaCte && !POS.cliente) {
       ShowToast('Aviso', 'Seleccione un cliente para Cuenta Corriente', 'info');
       return;
     }
 
-    if (tipo === 'CREDITO_DEV' && !POS.cliente) {
+    if (esCreditoDev && !POS.cliente) {
       ShowToast('Aviso', 'Seleccione un cliente para usar Credito de Devolucion', 'info');
       return;
     }
 
-    if (tipo === 'CREDITO_DEV') {
+    if (esCreditoDev) {
       const selCredito = document.getElementById('pagoCreditoDev');
       if (!selCredito || !selCredito.value) {
         ShowToast('Aviso', 'Seleccione un credito de devolucion', 'info');
@@ -462,10 +514,17 @@ const POS = {
       }
     }
 
-    const pago = { tipo, importe, descripcion: tipo, guidBanco: '', guidBancosCuentas: '' };
+    let descripcion = tipoDescrip;
+    if (compSel) descripcion = (compSel.TIPO_COMPROBANTE || '').trim();
+
+    const pago = { tipo: tipoSel.GUID.trim(), importe, descripcion, guidBanco: '', guidBancosCuentas: '', _esEfectivo: esEfectivo, _esCtaCte: esCtaCte, _esCreditoDev: esCreditoDev };
+
+    if (compSel) {
+      pago.guidComprobante = compSel.GUID.trim();
+    }
 
     // Auto-asignar cuenta caja para EFECTIVO
-    if (tipo === 'EFECTIVO') {
+    if (esEfectivo) {
       const cuentaCaja = GetCuentaCajaSucursal();
       if (cuentaCaja) {
         pago.guidBancosCuentas = cuentaCaja.GUID.trim();
@@ -473,22 +532,17 @@ const POS = {
       }
     }
 
-    if (tipo === 'TARJETA') {
-      const selTarjeta = document.getElementById('pagoTarjeta');
-      const selPlan = document.getElementById('pagoPlan');
-      if (selTarjeta.value) {
-        pago.descripcion = selTarjeta.options[selTarjeta.selectedIndex].text;
-        pago.guidBanco = '';
-        if (selPlan.value) {
-          const planData = JSON.parse(selPlan.value);
-          pago.cuotas = planData.cuotas;
-          pago.interes = planData.interes;
-          pago.descripcion += ` ${planData.cuotas} cuotas`;
-        }
-      }
+    // Planes
+    const selPlan = document.getElementById('pagoPlan');
+    if (selPlan.value) {
+      const planData = JSON.parse(selPlan.value);
+      pago.cuotas = planData.cuotas;
+      pago.interes = planData.interes;
+      pago.coeficiente = planData.coeficiente;
+      pago.descripcion += ` ${planData.cuotas} cuotas`;
     }
 
-    if (tipo === 'CREDITO_DEV') {
+    if (esCreditoDev) {
       const selCredito = document.getElementById('pagoCreditoDev');
       const creditoData = JSON.parse(selCredito.value);
       pago.guidCreditoDevolucion = creditoData.guid;
@@ -499,7 +553,7 @@ const POS = {
     document.getElementById('pagoImporte').value = '';
 
     // Si el pago requiere factura, activarla automáticamente
-    if (tipo !== 'EFECTIVO' && tipo !== 'CTA_CTE' && tipo !== 'CREDITO_DEV') {
+    if (!esEfectivo && !esCtaCte && !esCreditoDev) {
       POS.emitirFactura = true;
     }
 
@@ -579,7 +633,7 @@ const POS = {
       return;
     }
 
-    const total = POS.GetTotal();
+    const total = GetTotalACobrar();
     const totalPagos = POS.GetTotalPagos();
     if (Math.abs(total - totalPagos) > 0.01) {
       ShowToast('Aviso', 'El total de pagos no coincide con el total de la venta', 'info');
@@ -597,7 +651,7 @@ const POS = {
     }
 
     // Validar crédito si hay pago CTA_CTE
-    const pagoCtaCte = POS.pagos.find(p => p.tipo === 'CTA_CTE');
+    const pagoCtaCte = POS.pagos.find(p => p._esCtaCte);
     if (pagoCtaCte && POS.cliente) {
       try {
         const validacion = await API.ValidarCreditoCtaCte(POS.cliente.GUID, pagoCtaCte.importe);
@@ -866,19 +920,192 @@ function RenderPOSItems() {
 
 function GetTotalACobrar() {
   if (POS._cambioData && POS._cambioData.diferencia > 0) return POS._cambioData.diferencia;
+  if (POS._totalConRecargo > 0) return POS._totalConRecargo;
   return POS.GetTotal();
 }
 
+function GetTipoCobroPagoSel() {
+  const sel = document.getElementById('pagoTipo');
+  if (!sel.value) return null;
+  return State.tiposCobrosPagos.find(t => t.GUID.trim() === sel.value) || null;
+}
+
+function GetComprobanteSel() {
+  const sel = document.getElementById('pagoComprobante');
+  if (!sel || !sel.value) return null;
+  return State.tcPagos.find(t => t.GUID.trim() === sel.value) || null;
+}
+
+function AplicarRecargo(totalBase) {
+  const div = document.getElementById('divRecargoInfo');
+  const compSel = GetComprobanteSel();
+  const selPlan = document.getElementById('pagoPlan');
+  let interes = 0;
+  let coeficiente = 0;
+  let origen = '';
+
+  // Plan tiene prioridad sobre comprobante
+  if (selPlan && selPlan.value) {
+    try {
+      const planData = JSON.parse(selPlan.value);
+      interes = planData.interes || 0;
+      coeficiente = planData.coeficiente || 0;
+      origen = 'plan';
+    } catch (_) {}
+  } else if (compSel) {
+    interes = compSel.INTERES || 0;
+    coeficiente = compSel.COEFICIENTE || 0;
+    origen = 'comprobante';
+  }
+
+  const totalPagos = POS.GetTotalPagos();
+
+  // Mostrar siempre si hay comprobante o plan seleccionado
+  if (compSel || origen === 'plan') {
+    // Calcular el total con recargo siempre sobre el total base completo
+    let totalConRecargo = totalBase;
+    if (coeficiente > 0 && coeficiente !== 1) {
+      totalConRecargo = totalBase / coeficiente;
+    } else if (interes > 0) {
+      totalConRecargo = totalBase * (1 + interes / 100);
+    }
+    const hayRecargo = Math.abs(totalConRecargo - totalBase) > 0.01;
+    const restante = totalConRecargo - totalPagos;
+
+    div.classList.remove('d-none');
+    div.innerHTML = `
+      <div class="alert ${hayRecargo ? 'alert-danger border-danger' : 'alert-info'} py-2 mb-0" style="${hayRecargo ? 'border-width:2px !important;' : ''}">
+        <div class="d-flex align-items-center flex-wrap gap-2 ${hayRecargo ? 'fw-bold' : ''}">
+          <span><i class="bi bi-percent me-1"></i>Recargo: <strong>${interes}%</strong></span>
+          <span>|</span>
+          <span>Coeficiente: <strong>${coeficiente}</strong></span>
+          ${hayRecargo ? `
+          <span>|</span>
+          <span>Base: ${FormatMoney(totalBase)}</span>
+          <span class="fs-5">&rarr;</span>
+          <span class="text-danger fs-5 fw-bold">${FormatMoney(totalConRecargo)}</span>
+          ` : ''}
+        </div>
+      </div>`;
+    POS._totalConRecargo = totalConRecargo;
+
+    // Actualizar Total a Pagar y Restante con el total recargado
+    document.getElementById('pagoTotalVenta').textContent = FormatMoney(totalConRecargo);
+    document.getElementById('pagoRestante').textContent = FormatMoney(restante);
+    document.getElementById('pagoRestante').className = restante > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
+
+    // Solo pre-llenar importe si queda algo pendiente
+    if (restante > 0.01) {
+      document.getElementById('pagoImporte').value = restante.toFixed(2);
+    } else {
+      document.getElementById('pagoImporte').value = '';
+    }
+    ActualizarBotonConfirmar();
+  } else {
+    POS._totalConRecargo = 0;
+    const restante = totalBase - totalPagos;
+    div.classList.add('d-none');
+    div.innerHTML = '';
+
+    // Restaurar Total a Pagar y Restante al importe base (sin recargo)
+    document.getElementById('pagoTotalVenta').textContent = FormatMoney(totalBase);
+    document.getElementById('pagoRestante').textContent = FormatMoney(restante);
+    document.getElementById('pagoRestante').className = restante > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
+
+    if (restante > 0.01) {
+      document.getElementById('pagoImporte').value = restante.toFixed(2);
+    } else {
+      document.getElementById('pagoImporte').value = '';
+    }
+    ActualizarBotonConfirmar();
+  }
+}
+
 function RenderPagosModal() {
-  const total = GetTotalACobrar();
+  // Usar siempre el total base (sin recargo) para calcular; AplicarRecargo actualizará los labels
+  const baseTotal = POS._cambioData && POS._cambioData.diferencia > 0 ? POS._cambioData.diferencia : POS.GetTotal();
+  const total = baseTotal;
   const totalPagos = POS.GetTotalPagos();
   const restante = total - totalPagos;
-  const tipoActual = document.getElementById('pagoTipo').value;
+
+  // ── 1. Poblar TiposCobrosPagos (TIPOMOVIMIENTO != 'E') ──
+  const sel = document.getElementById('pagoTipo');
+  const prevTipo = sel.value;
+  sel.innerHTML = '';
+  State.tiposCobrosPagos
+    .filter(t => (t.TIPOMOVIMIENTO || '').trim() !== 'E')
+    .forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.GUID.trim();
+      opt.textContent = (t.DESCRIPCION || '').trim();
+      sel.appendChild(opt);
+    });
+  if (prevTipo && sel.querySelector(`option[value="${prevTipo}"]`)) sel.value = prevTipo;
+
+  const tipoSel = GetTipoCobroPagoSel();
+  const tipoMov = tipoSel ? (tipoSel.TIPOMOVIMIENTO || '').trim() : '';
+  const tipoNum = tipoSel ? tipoSel.TIPO : null;
+  const esCtaCte = tipoMov === 'X';
+  const esEfectivo = tipoSel ? (tipoSel.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO' : false;
+  const esCreditoDev = tipoSel ? (tipoSel.DESCRIPCION || '').trim().toUpperCase().indexOf('CREDITO') >= 0 && (tipoSel.DESCRIPCION || '').trim().toUpperCase().indexOf('DEV') >= 0 : false;
+  const esNoEfectivo = !esEfectivo;
+
+  // ── 2. Poblar Comprobantes filtrados por TIPO del TipoCobroPago ──
+  const divComp = document.getElementById('divComprobante');
+  const selComp = document.getElementById('pagoComprobante');
+  const prevComp = selComp.value;
+  const comprobantes = tipoNum !== null ? State.tcPagos.filter(t => t.TIPO === tipoNum) : [];
+  if (comprobantes.length > 0) {
+    divComp.classList.remove('d-none');
+    selComp.innerHTML = '<option value="">Seleccione...</option>';
+    comprobantes.forEach(tc => {
+      const opt = document.createElement('option');
+      opt.value = tc.GUID.trim();
+      opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
+      selComp.appendChild(opt);
+    });
+    if (prevComp && selComp.querySelector(`option[value="${prevComp}"]`)) selComp.value = prevComp;
+  } else {
+    divComp.classList.add('d-none');
+    selComp.innerHTML = '';
+  }
+
+  // ── 3. Planes del comprobante seleccionado ──
+  const compSel = GetComprobanteSel();
+  const tienePlanes = compSel ? compSel.CANTPLANES > 0 : false;
+  document.getElementById('divCuotas').classList.toggle('d-none', !tienePlanes);
+  if (tienePlanes && compSel) {
+    const selPlan = document.getElementById('pagoPlan');
+    const prevPlan = selPlan.value;
+    selPlan.innerHTML = '<option value="">Sin plan</option>';
+    API.GetTCPagosPlanes(compSel.GUID.trim()).then(planes => {
+      planes.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ cuotas: p.CUOTAS, interes: p.INTERES, coeficiente: p.COEFICIENTE });
+        opt.textContent = `${(p.NOMBRECOMPROBANTEPAGO || '').trim()} - ${p.CUOTAS} cuotas (Int: ${p.INTERES}% | Coef: ${p.COEFICIENTE})`;
+        selPlan.appendChild(opt);
+      });
+      if (prevPlan) selPlan.value = prevPlan;
+      // ── 4. Info de recargo (después de cargar planes para no perder coeficientes) ──
+      AplicarRecargo(baseTotal);
+    }).catch(() => { AplicarRecargo(baseTotal); });
+  } else {
+    document.getElementById('pagoPlan').innerHTML = '';
+    // ── 4. Info de recargo ──
+    AplicarRecargo(baseTotal);
+  }
+
+  // ── 5. Credito Devolucion ──
+  document.getElementById('divCreditoDevOpciones').classList.toggle('d-none', !esCreditoDev);
+  if (esCreditoDev && POS.cliente) {
+    LoadCreditosDevolucion(POS.cliente.GUID.trim());
+  } else if (esCreditoDev && !POS.cliente) {
+    document.getElementById('pagoCreditoDev').innerHTML = '<option value="">Seleccione cliente primero</option>';
+  }
+
   const reqCliente = POS.RequiereCliente();
   const reqFactura = POS.RequiereFactura();
   const soloEfectivo = POS.SoloEfectivoOCtaCte();
-  const esNoEfectivo = tipoActual !== 'EFECTIVO';
-  const esCtaCte = tipoActual === 'CTA_CTE';
 
   // Indicar si es cobro de diferencia por cambio
   const lblTotal = document.getElementById('pagoTotalVenta');
@@ -895,47 +1122,7 @@ function RenderPagosModal() {
   } else if (cambioInfoEl) {
     cambioInfoEl.remove();
   }
-  document.getElementById('pagoRestante').textContent = FormatMoney(restante);
-  document.getElementById('pagoRestante').className = restante > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
-  document.getElementById('pagoImporte').value = restante > 0 ? restante.toFixed(2) : '';
-
-  // ── Credito Devolucion fields ──
-  const esCreditoDev = tipoActual === 'CREDITO_DEV';
-  document.getElementById('divCreditoDevOpciones').classList.toggle('d-none', !esCreditoDev);
-  if (esCreditoDev && POS.cliente) {
-    LoadCreditosDevolucion(POS.cliente.GUID.trim());
-  } else if (esCreditoDev && !POS.cliente) {
-    document.getElementById('pagoCreditoDev').innerHTML = '<option value="">Seleccione cliente primero</option>';
-  }
-
-  // ── Tarjeta fields ──
-  const isTarjeta = tipoActual === 'TARJETA';
-  document.getElementById('divTarjetaOpciones').classList.toggle('d-none', !isTarjeta);
-  document.getElementById('divCuotas').classList.toggle('d-none', !isTarjeta);
-
-  const selTarjeta = document.getElementById('pagoTarjeta');
-  selTarjeta.innerHTML = '<option value="">Seleccione...</option>';
-  State.tcPagos.forEach(tc => {
-    const opt = document.createElement('option');
-    opt.value = tc.GUID;
-    opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
-    selTarjeta.appendChild(opt);
-  });
-  selTarjeta.onchange = async () => {
-    const selPlan = document.getElementById('pagoPlan');
-    selPlan.innerHTML = '<option value="">Sin plan</option>';
-    if (selTarjeta.value) {
-      try {
-        const planes = await API.GetTCPagosPlanes(selTarjeta.value);
-        planes.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = JSON.stringify({ cuotas: p.CUOTAS, interes: p.INTERES, coeficiente: p.COEFICIENTE });
-          opt.textContent = `${(p.NOMBRECOMPROBANTEPAGO || '').trim()} - ${p.CUOTAS} cuotas (${p.INTERES}%)`;
-          selPlan.appendChild(opt);
-        });
-      } catch (_) {}
-    }
-  };
+  // AplicarRecargo actualizará Total/Restante con los valores correctos (con o sin recargo)
 
   // ── PASO 2: Cliente (condicional según tipo de pago seleccionado) ──
   const zonaCliente = document.getElementById('pagoClienteZona');
@@ -1018,7 +1205,7 @@ function RenderPagosModal() {
           <div>
             <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
             <strong>Debe seleccionar un cliente</strong>
-            <span class="ms-1">${esCtaCte ? 'para Cuenta Corriente' : tipoActual === 'TARJETA' ? 'para pago con Tarjeta' : 'para pago con Transferencia'}</span>
+            <span class="ms-1">${esCtaCte ? 'para Cuenta Corriente' : tipoSel ? 'para ' + (tipoSel.DESCRIPCION || '').trim() : ''}</span>
           </div>
           <button class="btn btn-primary" onclick="AbrirModalClientePago()">
             <i class="bi bi-person-plus me-1"></i>Seleccionar Cliente
@@ -1079,7 +1266,7 @@ function RenderPagosModal() {
   } else {
     tbody.innerHTML = POS.pagos.map((p, i) => `
       <tr>
-        <td><span class="badge bg-${p.tipo === 'EFECTIVO' ? 'success' : p.tipo === 'TARJETA' ? 'primary' : p.tipo === 'TRANSFERENCIA' ? 'info' : p.tipo === 'CREDITO_DEV' ? 'secondary' : 'warning'}">${p.tipo === 'CREDITO_DEV' ? 'CREDITO DEV.' : p.tipo}</span></td>
+        <td><span class="badge bg-${p._esEfectivo ? 'success' : p._esCreditoDev ? 'secondary' : p._esCtaCte ? 'warning' : 'primary'}">${p.descripcion}</span></td>
         <td>${p.descripcion}${p.cuotas > 1 ? ` (${p.cuotas} cuotas)` : ''}</td>
         <td class="text-end fw-bold">${FormatMoney(p.importe)}</td>
         <td><button class="btn btn-sm btn-outline-danger" onclick="POS.QuitarPago(${i})"><i class="bi bi-trash"></i></button></td>
@@ -1127,20 +1314,31 @@ function RenderPagosModal() {
     zonaFactura.innerHTML = '';
   }
 
-  // ── Enable/disable confirmar ──
-  const bloqueado = Math.abs(restante) > 0.01 || (reqCliente && !POS.cliente);
+  // ── Enable/disable confirmar (se actualiza también desde AplicarRecargo) ──
+  ActualizarBotonConfirmar();
+}
+
+function ActualizarBotonConfirmar() {
+  const totalFinal = POS._totalConRecargo > 0 ? POS._totalConRecargo : (POS._cambioData && POS._cambioData.diferencia > 0 ? POS._cambioData.diferencia : POS.GetTotal());
+  const totalPagos = POS.GetTotalPagos();
+  const restanteFinal = totalFinal - totalPagos;
+  const reqCliente = POS.RequiereCliente();
+  const bloqueado = Math.abs(restanteFinal) > 0.01 || (reqCliente && !POS.cliente);
   document.getElementById('btnConfirmarVenta').disabled = bloqueado;
 }
 
 function AbrirModalClientePago() {
-  const tipoActual = document.getElementById('pagoTipo')?.value || '';
-  const esCtaCte = tipoActual === 'CTA_CTE' || POS.pagos.some(p => p.tipo === 'CTA_CTE');
+  const tipoSel = GetTipoCobroPagoSel();
+  const tipoMov = tipoSel ? (tipoSel.TIPOMOVIMIENTO || '').trim() : '';
+  const esCtaCte = tipoMov === 'X' || POS.pagos.some(p => p._esCtaCte);
 
   const modalPagosEl = document.getElementById('modalPagos');
   const modalPagosInst = bootstrap.Modal.getInstance(modalPagosEl);
   if (modalPagosInst) modalPagosInst.hide();
 
   document.getElementById('searchCliente').value = '';
+  document.getElementById('formNuevoClienteContainer').classList.add('d-none');
+  document.getElementById('formNuevoClienteContainer').innerHTML = '';
   document.getElementById('listaClientes').innerHTML = esCtaCte
     ? '<div class="alert alert-warning py-2 mb-2"><i class="bi bi-info-circle me-1"></i>Solo clientes con cuenta corriente habilitada (límite de crédito asignado)</div>'
     : '';
@@ -1228,6 +1426,8 @@ function SeleccionarClienteDesdeModal(cliente) {
 function AbrirModalCliente() {
   document.getElementById('searchCliente').value = '';
   document.getElementById('listaClientes').innerHTML = '';
+  document.getElementById('formNuevoClienteContainer').classList.add('d-none');
+  document.getElementById('formNuevoClienteContainer').innerHTML = '';
   new bootstrap.Modal(document.getElementById('modalCliente')).show();
 
   const input = document.getElementById('searchCliente');
@@ -1248,6 +1448,157 @@ function AbrirModalCliente() {
     } catch (_) {}
   }, 300);
   setTimeout(() => input.focus(), 300);
+}
+
+// ── Nuevo Cliente (inline en modal) ──────────────────────────────────────────
+function ToggleFormNuevoCliente() {
+  const container = document.getElementById('formNuevoClienteContainer');
+  if (!container.classList.contains('d-none')) {
+    container.classList.add('d-none');
+    container.innerHTML = '';
+    return;
+  }
+  container.classList.remove('d-none');
+  container.innerHTML = `
+    <div class="card border-success">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3"><i class="bi bi-person-plus me-1"></i>Nuevo Cliente</h6>
+        <div class="row g-2">
+          <div class="col-md-4">
+            <label class="form-label">Tipo IVA <span class="text-danger">*</span></label>
+            <select class="form-select" id="ncTipoIva" onchange="OnNcTipoIvaChange()">
+              <option value="CONSUMIDOR FINAL">CONSUMIDOR FINAL</option>
+              <option value="RESPONSABLE INSCRIPTO">RESPONSABLE INSCRIPTO</option>
+              <option value="MONOTRIBUTO">MONOTRIBUTO</option>
+              <option value="EXENTO">EXENTO</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Documento <span class="text-danger" id="ncDocLabel">*</span></label>
+            <input type="text" class="form-control" id="ncDocumento" placeholder="Ej: 30.123.456" maxlength="12">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">CUIT <span class="text-danger d-none" id="ncCuitReq">*</span></label>
+            <input type="text" class="form-control" id="ncCuit" placeholder="Ej: 20-12345678-9" maxlength="13">
+          </div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-md-4">
+            <label class="form-label">Nombre <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="ncNombre" maxlength="255">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Direcci&oacute;n</label>
+            <input type="text" class="form-control" id="ncDireccion" maxlength="255">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" id="ncEmail" maxlength="255" placeholder="nombre@ejemplo.com">
+          </div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-md-4">
+            <label class="form-label">Celular</label>
+            <input type="text" class="form-control" id="ncCelular" placeholder="Min. 10 d&iacute;gitos" maxlength="20">
+          </div>
+          <div class="col-md-8 d-flex align-items-end gap-2">
+            <button class="btn btn-success" onclick="GuardarNuevoCliente()"><i class="bi bi-check-circle me-1"></i>Guardar Cliente</button>
+            <button class="btn btn-secondary" onclick="ToggleFormNuevoCliente()">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  OnNcTipoIvaChange();
+}
+
+function OnNcTipoIvaChange() {
+  const tipoIva = document.getElementById('ncTipoIva').value;
+  const esCF = tipoIva === 'CONSUMIDOR FINAL';
+  document.getElementById('ncCuitReq').classList.toggle('d-none', esCF);
+  document.getElementById('ncDocLabel').textContent = esCF ? '*' : '';
+}
+
+function ValidarDocumento(val) {
+  const num = parseInt(val.replace(/\./g, ''), 10);
+  return !isNaN(num) && num > 1000000;
+}
+
+function ValidarCuit(val) {
+  return /^\d{2}-\d{7,8}-\d{1}$/.test(val);
+}
+
+function ValidarEmail(val) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+}
+
+function ValidarCelular(val) {
+  const soloDigitos = val.replace(/\D/g, '');
+  return soloDigitos.length >= 10;
+}
+
+function FormatDocumento(val) {
+  const digits = val.replace(/\D/g, '');
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+async function GuardarNuevoCliente() {
+  const tipoIva = document.getElementById('ncTipoIva').value;
+  const documento = document.getElementById('ncDocumento').value.trim();
+  const cuit = document.getElementById('ncCuit').value.trim();
+  const nombre = document.getElementById('ncNombre').value.trim();
+  const direccion = document.getElementById('ncDireccion').value.trim();
+  const email = document.getElementById('ncEmail').value.trim();
+  const celular = document.getElementById('ncCelular').value.trim();
+
+  const esCF = tipoIva === 'CONSUMIDOR FINAL';
+
+  // Validaciones
+  if (!nombre) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
+
+  // Documento o CUIT obligatorio como minimo
+  if (!documento && !cuit) { ShowToast('Error', 'Debe ingresar Documento o CUIT', 'error'); return; }
+
+  if (documento && !ValidarDocumento(documento)) {
+    ShowToast('Error', 'Documento inv\u00e1lido. Debe ser mayor a 1.000.000', 'error'); return;
+  }
+
+  // Si no es Consumidor Final, CUIT es obligatorio
+  if (!esCF && !cuit) {
+    ShowToast('Error', 'El CUIT es obligatorio para ' + tipoIva, 'error'); return;
+  }
+  if (cuit && !ValidarCuit(cuit)) {
+    ShowToast('Error', 'CUIT inv\u00e1lido. Formato: 99-99999999-9', 'error'); return;
+  }
+
+  if (email && !ValidarEmail(email)) {
+    ShowToast('Error', 'Email inv\u00e1lido', 'error'); return;
+  }
+
+  if (celular && !ValidarCelular(celular)) {
+    ShowToast('Error', 'Celular inv\u00e1lido. M\u00ednimo 10 d\u00edgitos num\u00e9ricos', 'error'); return;
+  }
+
+  // Derivar campos automáticos
+  const tipoFactura = tipoIva === 'RESPONSABLE INSCRIPTO' ? 'A' : 'B';
+  const codigoDocumentoAfip = esCF ? 96 : 80;
+
+  try {
+    const result = await API.CreateCliente({
+      nombre, documento: documento.replace(/\./g, ''), cuit, direccion, email, celular,
+      tipoIva, tipoFactura, codigoDocumentoAfip
+    });
+
+    ShowToast('Cliente', 'Creado exitosamente', 'success');
+
+    // Cargar el cliente creado y seleccionarlo automáticamente
+    const nuevoCliente = await API.GetClienteByGuid(result.guid);
+    if (nuevoCliente) {
+      SeleccionarClienteDesdeModal(nuevoCliente);
+    }
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
 }
 
 // ============================================================================
@@ -3453,7 +3804,8 @@ function RenderBancos(container) {
         <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabCuentas">Cuentas Bancarias</a></li>
         <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabConceptos">Conceptos</a></li>
         <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabHomologacion">Conceptos por Banco</a></li>
-        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabTCPagos"><i class="bi bi-credit-card me-1"></i>Tarjetas / TC Pagos</a></li>
+        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabTCPagos">Tipos Comprob.Pagos</a></li>
+        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabTiposCobrosPagos">Tipos Cobros/Pagos</a></li>
       </ul>
       <div class="tab-content pt-3">
         <div class="tab-pane fade show active" id="tabBancos"><div id="contenidoBancos"></div></div>
@@ -3461,12 +3813,13 @@ function RenderBancos(container) {
         <div class="tab-pane fade" id="tabConceptos"><div id="contenidoConceptos"></div></div>
         <div class="tab-pane fade" id="tabHomologacion"><div id="contenidoHomologacion"></div></div>
         <div class="tab-pane fade" id="tabTCPagos"><div id="contenidoTCPagos"></div></div>
+        <div class="tab-pane fade" id="tabTiposCobrosPagos"><div id="contenidoTiposCobrosPagos"></div></div>
       </div>
     </div>
   `;
   LoadBancos();
 
-  document.querySelectorAll('#tabBancos, #tabCuentas, #tabConceptos, #tabHomologacion, #tabTCPagos').forEach(tab => {
+  document.querySelectorAll('#tabBancos, #tabCuentas, #tabConceptos, #tabHomologacion, #tabTCPagos, #tabTiposCobrosPagos').forEach(tab => {
     const el = document.querySelector(`a[href="#${tab.id}"]`);
     el.addEventListener('shown.bs.tab', () => {
       if (tab.id === 'tabBancos') LoadBancos();
@@ -3474,6 +3827,7 @@ function RenderBancos(container) {
       if (tab.id === 'tabConceptos') LoadBancosConceptos();
       if (tab.id === 'tabHomologacion') LoadConceptosPorBanco();
       if (tab.id === 'tabTCPagos') LoadTCPagos();
+      if (tab.id === 'tabTiposCobrosPagos') LoadTiposCobrosPagos();
     });
   });
 }
@@ -3926,61 +4280,68 @@ async function EliminarHomologacion(guid) {
 async function LoadTCPagos() {
   const div = document.getElementById('contenidoTCPagos');
   try {
-    const tcpagos = await API.GetTCPagos();
+    const [tcpagos, tiposCP] = await Promise.all([API.GetTCPagos(), API.GetTiposCobrosPagos()]);
+    const tiposCPMap = {};
+    tiposCP.forEach(t => { tiposCPMap[t.GUID.trim()] = (t.DESCRIPCION || '').trim(); });
     div.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3">
         <span class="text-muted">${tcpagos.length} medio(s) de pago</span>
         <button class="btn btn-primary btn-sm" onclick="ShowFormTCPago()"><i class="bi bi-plus-circle me-1"></i>Nuevo Medio de Pago</button>
       </div>
       <div id="formTCPagoContainer"></div>
-      <div class="accordion" id="accordionTCPagos">
-        ${tcpagos.map(tc => {
-          const guid = tc.GUID.trim();
-          const nombre = (tc.TIPO_COMPROBANTE || '').trim();
-          return `
-            <div class="accordion-item">
-              <h2 class="accordion-header">
-                <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#tcpago_${guid}">
-                  <div class="d-flex align-items-center gap-3 w-100">
-                    <strong>${nombre}</strong>
-                    <span class="badge bg-secondary">${(tc.ABREVIADO || '').trim()}</span>
-                    ${tc.INTERES > 0 ? `<small class="text-warning">Int: ${tc.INTERES}%</small>` : ''}
-                    <small class="text-muted ms-auto me-3">N&ordm; Comercio: ${(tc.NUMERO_COMERCIO || '').trim() || '-'}</small>
+      <table class="table table-sm table-hover">
+        <thead class="table-light">
+          <tr>
+            <th>Tipo Cobro/Pago</th>
+            <th>Nombre</th>
+            <th>Abrev.</th>
+            <th>N&ordm; Comercio</th>
+            <th class="text-end">Inter&eacute;s %</th>
+            <th class="text-end">Coeficiente</th>
+            <th class="text-end"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tcpagos.map(tc => {
+            const guid = tc.GUID.trim();
+            const tienePlanes = tc.CANTPLANES > 0;
+            return `<tr class="${tienePlanes ? 'table-info' : ''}">
+              <td>${tiposCPMap[(tc.GUIDTIPOSCOBROSPAGOS || '').trim()] || ''}</td>
+              <td>${(tc.TIPO_COMPROBANTE || '').trim()}</td>
+              <td>${(tc.ABREVIADO || '').trim()}</td>
+              <td>${(tc.NUMERO_COMERCIO || '').trim() || '-'}</td>
+              <td class="text-end">${tc.INTERES || 0}</td>
+              <td class="text-end">${tc.COEFICIENTE || 0}</td>
+              <td class="text-end text-nowrap">
+                ${tienePlanes ? `<button class="btn btn-outline-info btn-sm me-1" onclick="TogglePlanes('${guid}')" title="Ver planes (${tc.CANTPLANES})"><i class="bi bi-list-ol"></i> ${tc.CANTPLANES}</button>` : ''}
+                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormTCPago('${guid}')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" onclick="EliminarTCPago('${guid}')"><i class="bi bi-trash"></i></button>
+              </td>
+            </tr>
+            <tr id="planesRow_${guid}" class="d-none">
+              <td colspan="7" class="bg-light p-0">
+                <div class="p-3">
+                  <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-semibold mb-0"><i class="bi bi-list-ol me-1"></i>Planes de Cuotas</h6>
+                    <button class="btn btn-outline-success btn-sm" onclick="ShowFormPlan('${guid}')"><i class="bi bi-plus me-1"></i>Nuevo Plan</button>
                   </div>
-                </button>
-              </h2>
-              <div id="tcpago_${guid}" class="accordion-collapse collapse" data-bs-parent="#accordionTCPagos">
-                <div class="accordion-body">
-                  <div class="d-flex justify-content-between mb-3">
-                    <div>
-                      <small class="text-muted">Tel: ${(tc.TELEFONO || '').trim() || '-'} | Obs: ${(tc.OBSERVACIONES || '').trim() || '-'}</small>
-                    </div>
-                    <div class="d-flex gap-1">
-                      <button class="btn btn-outline-primary btn-sm" onclick="ShowFormTCPago('${guid}')"><i class="bi bi-pencil me-1"></i>Editar</button>
-                      <button class="btn btn-outline-danger btn-sm" onclick="EliminarTCPago('${guid}')"><i class="bi bi-trash me-1"></i>Eliminar</button>
-                    </div>
-                  </div>
-                  <h6 class="fw-semibold"><i class="bi bi-list-ol me-1"></i>Planes de Cuotas</h6>
-                  <div id="planesContainer_${guid}">
-                    <div class="text-muted small">Cargando planes...</div>
-                  </div>
-                  <button class="btn btn-outline-success btn-sm mt-2" onclick="ShowFormPlan('${guid}')"><i class="bi bi-plus me-1"></i>Nuevo Plan</button>
+                  <div id="planesContainer_${guid}"><div class="text-muted small">Cargando...</div></div>
                   <div id="formPlanContainer_${guid}"></div>
                 </div>
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
     `;
-    // Cargar planes al expandir cada accordion
-    document.querySelectorAll('#accordionTCPagos .accordion-collapse').forEach(el => {
-      el.addEventListener('shown.bs.collapse', () => {
-        const guid = el.id.replace('tcpago_', '');
-        LoadPlanesTCPago(guid);
-      });
-    });
   } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+function TogglePlanes(guid) {
+  const row = document.getElementById('planesRow_' + guid);
+  const visible = !row.classList.contains('d-none');
+  row.classList.toggle('d-none');
+  if (!visible) LoadPlanesTCPago(guid);
 }
 
 async function LoadPlanesTCPago(guidTcPago) {
@@ -4017,15 +4378,25 @@ async function LoadPlanesTCPago(guidTcPago) {
 
 async function ShowFormTCPago(guid) {
   const container = document.getElementById('formTCPagoContainer');
-  let data = { TIPO_COMPROBANTE: '', ABREVIADO: '', INTERES: 0, COEFICIENTE: 0, NUMERO_COMERCIO: '', TELEFONO: '', OBSERVACIONES: '', TIPO: 0, DATOSADICIONAL: 0 };
+  let data = { TIPO_COMPROBANTE: '', ABREVIADO: '', INTERES: 0, COEFICIENTE: 0, NUMERO_COMERCIO: '', TELEFONO: '', OBSERVACIONES: '', TIPO: 0, DATOSADICIONAL: 0, GUIDTIPOSCOBROSPAGOS: '' };
   if (guid) {
     try { data = await API.GetTCPagoByGuid(guid); } catch (e) { ShowToast('Error', e.message, 'error'); return; }
   }
+  let tiposCobrosPagos = [];
+  try { tiposCobrosPagos = await API.GetTiposCobrosPagos(); } catch (_) {}
+  const guidTCP = (data.GUIDTIPOSCOBROSPAGOS || '').trim();
   container.innerHTML = `
     <div class="card border-primary mb-3">
       <div class="card-body">
         <h6>${guid ? 'Editar' : 'Nuevo'} Medio de Pago</h6>
         <div class="row g-2">
+          <div class="col-md-3">
+            <label class="form-label">Tipo Cobro/Pago <span class="text-danger">*</span></label>
+            <select class="form-select" id="tcTipoCobroPago">
+              <option value="">Seleccione...</option>
+              ${tiposCobrosPagos.map(t => `<option value="${t.GUID.trim()}" data-tipo="${t.TIPO}" ${t.GUID.trim() === guidTCP ? 'selected' : ''}>${(t.DESCRIPCION || '').trim()}</option>`).join('')}
+            </select>
+          </div>
           <div class="col-md-3">
             <label class="form-label">Nombre <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="tcNombre" value="${(data.TIPO_COMPROBANTE || '').trim()}" maxlength="40">
@@ -4038,15 +4409,15 @@ async function ShowFormTCPago(guid) {
             <label class="form-label">N&ordm; Comercio</label>
             <input type="text" class="form-control" id="tcNumComercio" value="${(data.NUMERO_COMERCIO || '').trim()}" maxlength="40">
           </div>
-          <div class="col-md-2">
+          <div class="col-md-1">
             <label class="form-label">Inter&eacute;s %</label>
             <input type="number" class="form-control" id="tcInteres" value="${data.INTERES || 0}" step="0.01">
           </div>
-          <div class="col-md-2">
+          <div class="col-md-1">
             <label class="form-label">Coeficiente</label>
             <input type="number" class="form-control" id="tcCoeficiente" value="${data.COEFICIENTE || 0}" step="0.0000001">
           </div>
-          <div class="col-md-2">
+          <div class="col-md-1">
             <label class="form-label">Tel&eacute;fono</label>
             <input type="text" class="form-control" id="tcTelefono" value="${(data.TELEFONO || '').trim()}" maxlength="60">
           </div>
@@ -4067,6 +4438,8 @@ async function ShowFormTCPago(guid) {
 }
 
 async function GuardarTCPago(guid) {
+  const selTipoCobroPago = document.getElementById('tcTipoCobroPago');
+  const selectedOption = selTipoCobroPago.options[selTipoCobroPago.selectedIndex];
   const payload = {
     tipoComprobante: document.getElementById('tcNombre').value.trim(),
     abreviado: document.getElementById('tcAbreviado').value.trim(),
@@ -4075,7 +4448,10 @@ async function GuardarTCPago(guid) {
     numeroComercio: document.getElementById('tcNumComercio').value.trim(),
     telefono: document.getElementById('tcTelefono').value.trim(),
     observaciones: document.getElementById('tcObservaciones').value.trim(),
+    guidTiposCobrosPagos: selTipoCobroPago.value,
+    tipo: selectedOption && selectedOption.dataset.tipo ? parseInt(selectedOption.dataset.tipo) : 0,
   };
+  if (!payload.guidTiposCobrosPagos) { ShowToast('Error', 'Debe seleccionar un Tipo Cobro/Pago', 'error'); return; }
   if (!payload.tipoComprobante) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
   try {
     if (guid) { await API.UpdateTCPago(guid, payload); }
@@ -4158,5 +4534,112 @@ async function EliminarPlan(guidPlan, guidTcPago) {
     await API.DeleteTCPagoPlan(guidPlan);
     ShowToast('Plan', 'Eliminado', 'success');
     LoadPlanesTCPago(guidTcPago);
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+// ── Tipos Cobros/Pagos ──────────────────────────────────────────────────────
+const TIPO_MOV_LABELS = { A: 'AMBOS (Ingresos-Egresos)', I: 'INGRESOS', E: 'EGRESOS', X: 'PARA CUENTAS CORRIENTES' };
+const TIPO_MOV_BADGES = { A: 'bg-primary', I: 'bg-success', E: 'bg-danger', X: 'bg-warning text-dark' };
+
+async function LoadTiposCobrosPagos() {
+  const div = document.getElementById('contenidoTiposCobrosPagos');
+  try {
+    const items = await API.GetTiposCobrosPagos();
+    div.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <span class="text-muted">${items.length} tipo(s) de cobro/pago</span>
+        <button class="btn btn-primary btn-sm" onclick="ShowFormTipoCobroPago()"><i class="bi bi-plus-circle me-1"></i>Nuevo Tipo</button>
+      </div>
+      <div id="formTipoCobroPagoContainer"></div>
+      <table class="table table-sm table-hover">
+        <thead class="table-light">
+          <tr>
+            <th>Tipo</th>
+            <th>Descripci&oacute;n</th>
+            <th>Movimiento</th>
+            <th class="text-end"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(r => {
+            const guid = r.GUID.trim();
+            const mov = (r.TIPOMOVIMIENTO || '').trim();
+            return `<tr>
+              <td>${r.TIPO}</td>
+              <td>${(r.DESCRIPCION || '').trim()}</td>
+              <td><span class="badge ${TIPO_MOV_BADGES[mov] || 'bg-secondary'}">${TIPO_MOV_LABELS[mov] || mov}</span></td>
+              <td class="text-end">
+                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormTipoCobroPago('${guid}')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" onclick="EliminarTipoCobroPago('${guid}')"><i class="bi bi-trash"></i></button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+async function ShowFormTipoCobroPago(guid) {
+  const container = document.getElementById('formTipoCobroPagoContainer');
+  let data = { TIPO: 0, DESCRIPCION: '', TIPOMOVIMIENTO: 'A' };
+  if (guid) {
+    try { data = await API.GetTipoCobroPagoByGuid(guid); } catch (e) { ShowToast('Error', e.message, 'error'); return; }
+  }
+  const mov = (data.TIPOMOVIMIENTO || 'A').trim();
+  container.innerHTML = `
+    <div class="card border-primary mb-3">
+      <div class="card-body">
+        <h6>${guid ? 'Editar' : 'Nuevo'} Tipo Cobro/Pago</h6>
+        <div class="row g-2">
+          <div class="col-md-2">
+            <label class="form-label">Tipo</label>
+            <input type="number" class="form-control" id="tcpTipo" value="${data.TIPO || 0}" min="0" max="255">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Descripci&oacute;n <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="tcpDescripcion" value="${(data.DESCRIPCION || '').trim()}" maxlength="40">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Tipo Movimiento</label>
+            <select class="form-select" id="tcpTipoMovimiento">
+              <option value="A" ${mov === 'A' ? 'selected' : ''}>AMBOS (Ingresos-Egresos)</option>
+              <option value="I" ${mov === 'I' ? 'selected' : ''}>INGRESOS</option>
+              <option value="E" ${mov === 'E' ? 'selected' : ''}>EGRESOS</option>
+              <option value="X" ${mov === 'X' ? 'selected' : ''}>PARA CUENTAS CORRIENTES</option>
+            </select>
+          </div>
+          <div class="col-md-3 d-flex align-items-end gap-2">
+            <button class="btn btn-success btn-sm" onclick="GuardarTipoCobroPago('${guid || ''}')"><i class="bi bi-check me-1"></i>Guardar</button>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('formTipoCobroPagoContainer').innerHTML=''">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function GuardarTipoCobroPago(guid) {
+  const payload = {
+    tipo: parseInt(document.getElementById('tcpTipo').value) || 0,
+    descripcion: document.getElementById('tcpDescripcion').value.trim(),
+    tipoMovimiento: document.getElementById('tcpTipoMovimiento').value,
+  };
+  if (!payload.descripcion) { ShowToast('Error', 'La descripci\u00f3n es obligatoria', 'error'); return; }
+  try {
+    if (guid) { await API.UpdateTipoCobroPago(guid, payload); }
+    else { await API.CreateTipoCobroPago(payload); }
+    ShowToast('Tipo Cobro/Pago', guid ? 'Actualizado' : 'Creado', 'success');
+    document.getElementById('formTipoCobroPagoContainer').innerHTML = '';
+    LoadTiposCobrosPagos();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+async function EliminarTipoCobroPago(guid) {
+  if (!confirm('Eliminar este tipo de cobro/pago?')) return;
+  try {
+    await API.DeleteTipoCobroPago(guid);
+    ShowToast('Tipo Cobro/Pago', 'Eliminado', 'success');
+    LoadTiposCobrosPagos();
   } catch (err) { ShowToast('Error', err.message, 'error'); }
 }
