@@ -12,8 +12,32 @@
  Target Server Version : 17001000
  File Encoding         : 65001
 
- Date: 17/03/2026 15:55:22
+ Date: 23/03/2026 12:47:11
 */
+
+
+-- ----------------------------
+-- Table structure for AdminUsers
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[AdminUsers]') AND type IN ('U'))
+	DROP TABLE [dbo].[AdminUsers]
+GO
+
+CREATE TABLE [dbo].[AdminUsers] (
+  [Id] int  IDENTITY(1,1) NOT NULL,
+  [Username] nvarchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [Email] nvarchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [PasswordHash] nvarchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [FullName] nvarchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [Active] bit DEFAULT 1 NULL,
+  [LastLogin] datetime  NULL,
+  [CreatedAt] datetime DEFAULT getdate() NULL,
+  [UpdatedAt] datetime DEFAULT getdate() NULL
+)
+GO
+
+ALTER TABLE [dbo].[AdminUsers] SET (LOCK_ESCALATION = TABLE)
+GO
 
 
 -- ----------------------------
@@ -150,7 +174,7 @@ CREATE TABLE [dbo].[BancosCuentas] (
   [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [ID] int  NOT NULL,
   [GUIDCONFIGURACION] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [GUIDBANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDTIPOCUENTABANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [TIPOCUENTA] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [NUMEROCUENTA] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
@@ -162,8 +186,7 @@ CREATE TABLE [dbo].[BancosCuentas] (
   [FECHACIERRE] date  NULL,
   [SALDOINICIAL] int  NULL,
   [SALDO] decimal(7,2)  NULL,
-  [TITULAR] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+  [TITULAR] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -330,7 +353,8 @@ CREATE TABLE [dbo].[CajaDiaria] (
   [ts] float(53)  NULL,
   [sts] float(53)  NULL,
   [dts] float(53)  NULL,
-  [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+  [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDUSUARIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
 )
 GO
 
@@ -369,7 +393,8 @@ CREATE TABLE [dbo].[CajaGastos] (
   [sts] int  NULL,
   [dts] int  NULL,
   [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [GUIDCAJADIARIA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+  [GUIDCAJADIARIA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDUSUARIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
 )
 GO
 
@@ -588,15 +613,31 @@ GO
 CREATE TABLE [dbo].[ConceptosPorBanco] (
   [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [ID] int  NOT NULL,
-  [GUIDBANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDCONCEPTOBANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [CODIGOCONCEPTOSEGUNBANCO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [DESCRIPCIONSEGUNBANCO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+  [DESCRIPCIONSEGUNBANCO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
 ALTER TABLE [dbo].[ConceptosPorBanco] SET (LOCK_ESCALATION = TABLE)
+GO
+
+
+-- ----------------------------
+-- Table structure for CondicionArticulos
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[CondicionArticulos]') AND type IN ('U'))
+	DROP TABLE [dbo].[CondicionArticulos]
+GO
+
+CREATE TABLE [dbo].[CondicionArticulos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [ESTADO] varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL
+)
+GO
+
+ALTER TABLE [dbo].[CondicionArticulos] SET (LOCK_ESCALATION = TABLE)
 GO
 
 
@@ -669,6 +710,56 @@ CREATE TABLE [dbo].[Configuracion] (
 GO
 
 ALTER TABLE [dbo].[Configuracion] SET (LOCK_ESCALATION = TABLE)
+GO
+
+
+-- ----------------------------
+-- Table structure for CreditosDevoluciones
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[CreditosDevoluciones]') AND type IN ('U'))
+	DROP TABLE [dbo].[CreditosDevoluciones]
+GO
+
+CREATE TABLE [dbo].[CreditosDevoluciones] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDCLIENTES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDSUCURSALES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [FECHA] date  NOT NULL,
+  [MONTOORIGINAL] decimal(13,3)  NOT NULL,
+  [MONTOUSADO] decimal(13,3) DEFAULT 0 NOT NULL,
+  [ESTADO] varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'ACTIVO' NOT NULL,
+  [ts] float(53)  NOT NULL,
+  [sts] float(53)  NOT NULL,
+  [dts] float(53)  NULL
+)
+GO
+
+ALTER TABLE [dbo].[CreditosDevoluciones] SET (LOCK_ESCALATION = TABLE)
+GO
+
+
+-- ----------------------------
+-- Table structure for CreditosDevolucionesUsos
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[CreditosDevolucionesUsos]') AND type IN ('U'))
+	DROP TABLE [dbo].[CreditosDevolucionesUsos]
+GO
+
+CREATE TABLE [dbo].[CreditosDevolucionesUsos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDCREDITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [MONTOUSADO] decimal(13,3)  NOT NULL,
+  [FECHA] date  NOT NULL,
+  [ts] float(53)  NOT NULL,
+  [sts] float(53)  NOT NULL,
+  [dts] float(53)  NULL
+)
+GO
+
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] SET (LOCK_ESCALATION = TABLE)
 GO
 
 
@@ -845,8 +936,6 @@ CREATE TABLE [dbo].[Facturas] (
   [CODIGO_VENDEDOR] int  NOT NULL,
   [VENDEDOR_NOMBRE] char(100) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [BONIFICACION] decimal(5,2)  NULL,
-  [CODIGO_FACTURA] int  NULL,
-  [CODIGO_CLIENTE] int  NULL,
   [CODIGO_DOCUMENTO_AFIP] decimal(3)  NOT NULL,
   [CODIGO_CONCEPTO_AFIP] decimal(3)  NOT NULL,
   [IDCOMP] int  NOT NULL,
@@ -887,8 +976,8 @@ CREATE TABLE [dbo].[Facturas] (
   [MONTO_BRUTOS] decimal(15,2)  NULL,
   [MONTO_GANANCIA] decimal(15,2)  NULL,
   [TOTAL] decimal(15,2)  NULL,
-  [DECAE] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [FECAE] date  NULL,
+  [CAE] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [FECHAVENCIMIENTOCAE] date  NULL,
   [PENDIENTE] tinyint  NULL,
   [CUENTA] char(40) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [PROCESADAAFIP] tinyint  NULL,
@@ -908,7 +997,8 @@ CREATE TABLE [dbo].[Facturas] (
   [GUIDCOMPROBANTEASOCIADO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [Codigo_ComprobanteAfip] int  NULL,
   [Recargo] decimal(13,2)  NULL,
-  [Descuento] decimal(13,2)  NULL
+  [Descuento] decimal(13,2)  NULL,
+  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -1017,7 +1107,12 @@ CREATE TABLE [dbo].[FormaPagos] (
   [GUIDMOVIMIENTOBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [ts] float(53)  NULL,
   [sts] float(53)  NULL,
-  [dts] float(53)  NULL
+  [dts] float(53)  NULL,
+  [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDTCPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDTCPAGOSPLANES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
 )
 GO
 
@@ -1096,7 +1191,7 @@ CREATE TABLE [dbo].[LibroCheques] (
   [GUIDCONFIGURACION] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUIDGASTOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUIDPROVEEDOR] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [GUIDBANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [TIPOCHEQUE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [FECHAVENCIMIENTO] date  NULL,
   [GUIDUSUARIOCARGA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
@@ -1110,7 +1205,6 @@ CREATE TABLE [dbo].[LibroCheques] (
   [ESTADO] char(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [FECHAEMISION] date  NULL,
   [FECHACOBRO] date  NULL,
-  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUIDORDENESDEPAGO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDRECIBO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDPAGOSRECIBOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL
@@ -1225,6 +1319,34 @@ GO
 
 
 -- ----------------------------
+-- Table structure for MovimientoAdelantos
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[MovimientoAdelantos]') AND type IN ('U'))
+	DROP TABLE [dbo].[MovimientoAdelantos]
+GO
+
+CREATE TABLE [dbo].[MovimientoAdelantos] (
+  [Guid] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GuidEmpleados] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GuidSucursales] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GuidCajaGastos] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [Fecha] date  NOT NULL,
+  [Debe] decimal(13,3) DEFAULT 0 NULL,
+  [Haber] decimal(13,3) DEFAULT 0 NULL,
+  [Saldo] decimal(13,3) DEFAULT 0 NULL,
+  [Observaciones] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [MesImputacion] varchar(7) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [ts] float(53)  NULL,
+  [sts] float(53)  NULL,
+  [dts] float(53)  NULL
+)
+GO
+
+ALTER TABLE [dbo].[MovimientoAdelantos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+
+-- ----------------------------
 -- Table structure for MovimientoArticulos
 -- ----------------------------
 IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[MovimientoArticulos]') AND type IN ('U'))
@@ -1276,11 +1398,11 @@ CREATE TABLE [dbo].[MovimientoClientes] (
   [GUIDCAJADIARIA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDMOVIMIENTOBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL DEFAULT '',
-  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL DEFAULT '',
   [ts] float(53)  NULL,
   [sts] float(53)  NULL,
-  [dts] float(53)  NULL
+  [dts] float(53)  NULL,
+  [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -1404,14 +1526,13 @@ CREATE TABLE [dbo].[MovimientosCuentaBancos] (
   [CREDITOS] decimal(13,2)  NULL,
   [IMPORTE] decimal(13,2)  NULL,
   [GUIDCONFIGURACION] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [GUIDBANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [BANCO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUIDCONCEPTOBANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [CONCEPTO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GuidTiposMovimientosCuentaBancos] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GuidBancosCuentas] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [SALDO] decimal(13,2)  NULL,
-  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [DESCRIPCION] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
@@ -1639,7 +1760,11 @@ CREATE TABLE [dbo].[Recibos] (
   [IMPORTECOMPROBANTE] decimal(13,2)  NULL,
   [DESCUENTOCOMPROBANTE] decimal(13,2)  NULL,
   [SUBTOTALCOMPROBANTE] decimal(13,2)  NULL,
-  [TOTALRECIBO] decimal(13,2)  NULL
+  [TOTALRECIBO] decimal(13,2)  NULL,
+  [GUIDCAJAGASTOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDCAJADIARIA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDUSUARIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDEMPLEADOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -1677,11 +1802,11 @@ CREATE TABLE [dbo].[Remitos] (
   [GUIDVENDEDORES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDIMPUTACIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUIDFACTURAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [PENDIENTEFACTURAR] int  NULL,
   [ts] float(53)  NOT NULL,
   [sts] float(53)  NOT NULL,
-  [dts] float(53)  NULL
+  [dts] float(53)  NULL,
+  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -1719,11 +1844,11 @@ CREATE TABLE [dbo].[RemitosCambios] (
   [GUIDVENDEDORES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDIMPUTACIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUIDFACTURAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [PENDIENTEFACTURAR] int  NULL,
   [ts] float(53)  NOT NULL,
   [sts] float(53)  NOT NULL,
-  [dts] float(53)  NULL
+  [dts] float(53)  NULL,
+  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -1817,11 +1942,11 @@ CREATE TABLE [dbo].[RemitosDevoluciones] (
   [GUIDVENDEDORES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDIMPUTACIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUIDFACTURAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [PENDIENTEFACTURAR] int  NULL,
   [ts] float(53)  NOT NULL,
   [sts] float(53)  NOT NULL,
-  [dts] float(53)  NULL
+  [dts] float(53)  NULL,
+  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -2408,7 +2533,8 @@ CREATE TABLE [dbo].[TCPagos] (
   [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [ts] float(53)  NULL,
   [sts] float(53)  NULL,
-  [dts] float(53)  NULL
+  [dts] float(53)  NULL,
+  [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
 )
 GO
 
@@ -2431,7 +2557,7 @@ CREATE TABLE [dbo].[TCPagosPlanes] (
   [CUOTAS] smallint  NULL,
   [ID] char(3) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [GUIDTCPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDTIPOSCOMPROBANTESPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [ts] float(53)  NOT NULL,
   [sts] float(53)  NOT NULL,
   [dts] float(53)  NOT NULL,
@@ -2467,6 +2593,28 @@ GO
 
 
 -- ----------------------------
+-- Table structure for TiposCobrosPagos
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[TiposCobrosPagos]') AND type IN ('U'))
+	DROP TABLE [dbo].[TiposCobrosPagos]
+GO
+
+CREATE TABLE [dbo].[TiposCobrosPagos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [TIPO] tinyint  NOT NULL,
+  [DESCRIPCION] char(40) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [TIPOMOVIMIENTO] char(1) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [ts] float(53)  NULL,
+  [sts] float(53)  NULL,
+  [dts] float(53)  NULL
+)
+GO
+
+ALTER TABLE [dbo].[TiposCobrosPagos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+
+-- ----------------------------
 -- Table structure for TiposComprobante
 -- ----------------------------
 IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[TiposComprobante]') AND type IN ('U'))
@@ -2486,22 +2634,35 @@ GO
 
 
 -- ----------------------------
--- Table structure for TiposComprobantesDePagos
+-- Table structure for TiposComprobantesPagos
 -- ----------------------------
-IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[TiposComprobantesDePagos]') AND type IN ('U'))
-	DROP TABLE [dbo].[TiposComprobantesDePagos]
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[TiposComprobantesPagos]') AND type IN ('U'))
+	DROP TABLE [dbo].[TiposComprobantesPagos]
 GO
 
-CREATE TABLE [dbo].[TiposComprobantesDePagos] (
+CREATE TABLE [dbo].[TiposComprobantesPagos] (
+  [CODIGO_TCP] int  NULL,
+  [ABREVIADO] char(2) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [TIPO_COMPROBANTE] char(40) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [INTERES] decimal(7,2)  NULL,
+  [COEFICIENTE] decimal(11,7)  NULL,
+  [TELEFONO] char(60) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [OBSERVACIONES] varchar(254) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [NUMERO_COMERCIO] char(40) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [ID] char(3) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [DATOSADICIONAL] tinyint  NULL,
+  [TIPO] tinyint  NULL,
   [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [ID] int  NOT NULL,
-  [FORMADEPAGO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [DESCRIPCION] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [ACTIVO] tinyint  NULL
+  [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [ts] float(53)  NULL,
+  [sts] float(53)  NULL,
+  [dts] float(53)  NULL,
+  [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDTIPOSCOBROSPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
-ALTER TABLE [dbo].[TiposComprobantesDePagos] SET (LOCK_ESCALATION = TABLE)
+ALTER TABLE [dbo].[TiposComprobantesPagos] SET (LOCK_ESCALATION = TABLE)
 GO
 
 
@@ -2572,7 +2733,7 @@ CREATE TABLE [dbo].[Usuarios] (
   [MODULOS] tinyint  NULL,
   [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [GUIDSUCURSALES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [ts] float(53)  NULL,
   [sts] float(53)  NULL,
   [dts] float(53)  NULL,
@@ -3262,6 +3423,13 @@ GO
 
 
 -- ----------------------------
+-- Auto increment value for AdminUsers
+-- ----------------------------
+DBCC CHECKIDENT ('[dbo].[AdminUsers]', RESEED, 1)
+GO
+
+
+-- ----------------------------
 -- Indexes structure for table Articulos
 -- ----------------------------
 CREATE NONCLUSTERED INDEX [ART_GUIDGRUPOSKEY]
@@ -3332,6 +3500,13 @@ CREATE NONCLUSTERED INDEX [BAN_IDKEY]
 ON [dbo].[Bancos] (
   [ID] ASC
 )
+GO
+
+CREATE UNIQUE NONCLUSTERED INDEX [UQ_Bancos_CuentaNumero]
+ON [dbo].[Bancos] (
+  [CUENTANUMERO] ASC
+)
+WHERE ([CUENTANUMERO] IS NOT NULL)
 GO
 
 
@@ -3885,6 +4060,29 @@ GO
 
 
 -- ----------------------------
+-- Uniques structure for table CondicionArticulos
+-- ----------------------------
+ALTER TABLE [dbo].[CondicionArticulos] ADD CONSTRAINT [UQ_CondicionArticulos_Estado] UNIQUE NONCLUSTERED ([ESTADO] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+ALTER TABLE [dbo].[CondicionArticulos] ADD CONSTRAINT [UQ_CondicionArticulos_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Primary Key structure for table CondicionArticulos
+-- ----------------------------
+ALTER TABLE [dbo].[CondicionArticulos] ADD CONSTRAINT [PK_CondicionArticulos] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
 -- Indexes structure for table Configuracion
 -- ----------------------------
 CREATE NONCLUSTERED INDEX [CNF_EMPRESAKEY]
@@ -3904,6 +4102,76 @@ GO
 -- Primary Key structure for table Configuracion
 -- ----------------------------
 ALTER TABLE [dbo].[Configuracion] ADD CONSTRAINT [PK__Configur__15B69B8EECD0EBC5] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Indexes structure for table CreditosDevoluciones
+-- ----------------------------
+CREATE NONCLUSTERED INDEX [IX_CreditosDevoluciones_GuidClientes_Estado]
+ON [dbo].[CreditosDevoluciones] (
+  [GUIDCLIENTES] ASC,
+  [ESTADO] ASC
+)
+WHERE ([dts] IS NULL)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_CreditosDevoluciones_GuidRemitosDevoluciones]
+ON [dbo].[CreditosDevoluciones] (
+  [GUIDREMITOSDEVOLUCIONES] ASC
+)
+GO
+
+
+-- ----------------------------
+-- Uniques structure for table CreditosDevoluciones
+-- ----------------------------
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [UQ_CreditosDevoluciones_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Primary Key structure for table CreditosDevoluciones
+-- ----------------------------
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [PK_CreditosDevoluciones] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Indexes structure for table CreditosDevolucionesUsos
+-- ----------------------------
+CREATE NONCLUSTERED INDEX [IX_CreditosDevolucionesUsos_GuidCreditos]
+ON [dbo].[CreditosDevolucionesUsos] (
+  [GUIDCREDITOSDEVOLUCIONES] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_CreditosDevolucionesUsos_GuidRemitos]
+ON [dbo].[CreditosDevolucionesUsos] (
+  [GUIDREMITOS] ASC
+)
+GO
+
+
+-- ----------------------------
+-- Uniques structure for table CreditosDevolucionesUsos
+-- ----------------------------
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [UQ_CreditosDevolucionesUsos_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Primary Key structure for table CreditosDevolucionesUsos
+-- ----------------------------
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [PK_CreditosDevolucionesUsos] PRIMARY KEY CLUSTERED ([GUID])
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
 ON [PRIMARY]
 GO
@@ -4407,6 +4675,39 @@ GO
 
 
 -- ----------------------------
+-- Indexes structure for table MovimientoAdelantos
+-- ----------------------------
+CREATE NONCLUSTERED INDEX [IX_MovimientoAdelantos_GuidEmpleados_Fecha]
+ON [dbo].[MovimientoAdelantos] (
+  [GuidEmpleados] ASC,
+  [Fecha] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_MovimientoAdelantos_GuidSucursales_Fecha]
+ON [dbo].[MovimientoAdelantos] (
+  [GuidSucursales] ASC,
+  [Fecha] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_MovimientoAdelantos_MesImputacion]
+ON [dbo].[MovimientoAdelantos] (
+  [MesImputacion] ASC
+)
+GO
+
+
+-- ----------------------------
+-- Primary Key structure for table MovimientoAdelantos
+-- ----------------------------
+ALTER TABLE [dbo].[MovimientoAdelantos] ADD CONSTRAINT [PK_MovimientoAdelantos] PRIMARY KEY CLUSTERED ([Guid])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
 -- Primary Key structure for table MovimientoArticulos
 -- ----------------------------
 ALTER TABLE [dbo].[MovimientoArticulos] ADD CONSTRAINT [PK__Movimien__15B69B8E72952B42] PRIMARY KEY CLUSTERED ([GUID])
@@ -4628,9 +4929,9 @@ GO
 -- ----------------------------
 -- Indexes structure for table Proveedores
 -- ----------------------------
-CREATE NONCLUSTERED INDEX [PRO_IDKEY]
+CREATE NONCLUSTERED INDEX [PRO_GUIDCONFIGURACIONKEY]
 ON [dbo].[Proveedores] (
-  [ID] ASC
+  [GUIDCONFIGURACION] ASC
 )
 GO
 
@@ -4640,9 +4941,9 @@ ON [dbo].[Proveedores] (
 )
 GO
 
-CREATE NONCLUSTERED INDEX [PRO_GUIDCONFIGURACIONKEY]
+CREATE NONCLUSTERED INDEX [PRO_IDKEY]
 ON [dbo].[Proveedores] (
-  [GUIDCONFIGURACION] ASC
+  [ID] ASC
 )
 GO
 
@@ -4662,7 +4963,7 @@ GO
 -- ----------------------------
 -- Uniques structure for table Proveedores
 -- ----------------------------
-ALTER TABLE [dbo].[Proveedores] ADD CONSTRAINT [UQ__Proveedo__9AF05AD6B8A4E7E6] UNIQUE NONCLUSTERED ([GUID] ASC, [CUIT] ASC)
+ALTER TABLE [dbo].[Proveedores] ADD CONSTRAINT [UQ__Proveedo__9AF05AD67500437F] UNIQUE NONCLUSTERED ([GUID] ASC, [CUIT] ASC)
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
 ON [PRIMARY]
 GO
@@ -4671,7 +4972,7 @@ GO
 -- ----------------------------
 -- Primary Key structure for table Proveedores
 -- ----------------------------
-ALTER TABLE [dbo].[Proveedores] ADD CONSTRAINT [PK__Proveedo__15B69B8E9D97B2EF] PRIMARY KEY CLUSTERED ([GUID])
+ALTER TABLE [dbo].[Proveedores] ADD CONSTRAINT [PK__Proveedo__15B69B8EE99AF265] PRIMARY KEY CLUSTERED ([GUID])
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
 ON [PRIMARY]
 GO
@@ -5507,6 +5808,31 @@ GO
 
 
 -- ----------------------------
+-- Uniques structure for table TiposCobrosPagos
+-- ----------------------------
+ALTER TABLE [dbo].[TiposCobrosPagos] ADD CONSTRAINT [UQ_TiposCobrosPagos_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Checks structure for table TiposCobrosPagos
+-- ----------------------------
+ALTER TABLE [dbo].[TiposCobrosPagos] ADD CONSTRAINT [CK_TiposCobrosPagos_TipoMov] CHECK ([TIPOMOVIMIENTO]='X' OR [TIPOMOVIMIENTO]='E' OR [TIPOMOVIMIENTO]='I' OR [TIPOMOVIMIENTO]='A')
+GO
+
+
+-- ----------------------------
+-- Primary Key structure for table TiposCobrosPagos
+-- ----------------------------
+ALTER TABLE [dbo].[TiposCobrosPagos] ADD CONSTRAINT [PK_TiposCobrosPagos] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
 -- Primary Key structure for table TiposComprobante
 -- ----------------------------
 ALTER TABLE [dbo].[TiposComprobante] ADD CONSTRAINT [PK__TiposCom__16041FBBDA404997] PRIMARY KEY CLUSTERED ([CODIGOCOMPROBANTEAFIP])
@@ -5516,19 +5842,23 @@ GO
 
 
 -- ----------------------------
--- Indexes structure for table TiposComprobantesDePagos
+-- Uniques structure for table TiposComprobantesPagos
 -- ----------------------------
-CREATE NONCLUSTERED INDEX [TCDP_IDKEY]
-ON [dbo].[TiposComprobantesDePagos] (
-  [ID] ASC
-)
+ALTER TABLE [dbo].[TiposComprobantesPagos] ADD CONSTRAINT [UQ__TCPagos___0FA19C51D6084539] UNIQUE NONCLUSTERED ([CODIGO_TCP] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+ALTER TABLE [dbo].[TiposComprobantesPagos] ADD CONSTRAINT [UQ__TCPagos___9750319162DCA33C] UNIQUE NONCLUSTERED ([TIPO_COMPROBANTE] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
 GO
 
 
 -- ----------------------------
--- Primary Key structure for table TiposComprobantesDePagos
+-- Primary Key structure for table TiposComprobantesPagos
 -- ----------------------------
-ALTER TABLE [dbo].[TiposComprobantesDePagos] ADD CONSTRAINT [PK__TiposCom__15B69B8EBC6AFD62] PRIMARY KEY CLUSTERED ([GUID])
+ALTER TABLE [dbo].[TiposComprobantesPagos] ADD CONSTRAINT [PK__TCPagos___15B69B8EFD170DD8] PRIMARY KEY CLUSTERED ([GUID])
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
 ON [PRIMARY]
 GO
@@ -5669,5 +5999,38 @@ GO
 ALTER TABLE [dbo].[Vendedores] ADD CONSTRAINT [PK__Vendedor__15B69B8EFA8A0751] PRIMARY KEY CLUSTERED ([GUID])
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
 ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Foreign Keys structure for table CreditosDevoluciones
+-- ----------------------------
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [FK_CreditosDevoluciones_GuidClientes] FOREIGN KEY ([GUIDCLIENTES]) REFERENCES [dbo].[Clientes] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [FK_CreditosDevoluciones_GuidRemitosDevoluciones] FOREIGN KEY ([GUIDREMITOSDEVOLUCIONES]) REFERENCES [dbo].[RemitosDevoluciones] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [FK_CreditosDevoluciones_GuidSucursales] FOREIGN KEY ([GUIDSUCURSALES]) REFERENCES [dbo].[Sucursales] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+
+-- ----------------------------
+-- Foreign Keys structure for table CreditosDevolucionesUsos
+-- ----------------------------
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [FK_CreditosDevolucionesUsos_GuidCreditos] FOREIGN KEY ([GUIDCREDITOSDEVOLUCIONES]) REFERENCES [dbo].[CreditosDevoluciones] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [FK_CreditosDevolucionesUsos_GuidRemitos] FOREIGN KEY ([GUIDREMITOS]) REFERENCES [dbo].[Remitos] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [FK_CreditosDevolucionesUsos_GuidFormaPagos] FOREIGN KEY ([GUIDFORMAPAGOS]) REFERENCES [dbo].[FormaPagos] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+
+-- ----------------------------
+-- Foreign Keys structure for table MovimientoAdelantos
+-- ----------------------------
+ALTER TABLE [dbo].[MovimientoAdelantos] ADD CONSTRAINT [FK_MovimientoAdelantos_GuidSucursales] FOREIGN KEY ([GuidSucursales]) REFERENCES [dbo].[Sucursales] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
 GO
 

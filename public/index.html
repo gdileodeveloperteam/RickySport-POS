@@ -97,6 +97,21 @@
               <i class="bi bi-cash-coin me-2"></i>Gastos
             </a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="cajadiaria" onclick="App.Navigate('cajadiaria')">
+              <i class="bi bi-journal-text me-2"></i>Caja Diaria
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="clientes" onclick="App.Navigate('clientes')">
+              <i class="bi bi-people me-2"></i>Clientes
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link rounded" href="#" data-section="empleados" onclick="App.Navigate('empleados')">
+              <i class="bi bi-person-badge me-2"></i>Empleados
+            </a>
+          </li>
           <li class="nav-item mt-3"><small class="text-muted px-3 text-uppercase fw-semibold">Configuraci&oacute;n</small></li>
           <li class="nav-item">
             <a class="nav-link rounded" href="#" data-section="bancos" onclick="App.Navigate('bancos')">
@@ -173,6 +188,10 @@
               <label class="form-label fw-semibold">Credito disponible</label>
               <select id="pagoCreditoDev" class="form-select"></select>
             </div>
+            <div class="col-md-3 d-none" id="divCuentaBancaria">
+              <label class="form-label fw-semibold">Cuenta Bancaria</label>
+              <select id="pagoCuentaBancaria" class="form-select"></select>
+            </div>
           </div>
           <div id="divRecargoInfo" class="d-none mb-3"></div>
 
@@ -190,6 +209,41 @@
             </div>
             <div class="col-md-3 d-flex align-items-end">
               <button class="btn btn-primary w-100" id="btnAgregarPago" onclick="POS.AgregarPago()"><i class="bi bi-plus-circle me-1"></i>Agregar</button>
+            </div>
+          </div>
+
+          <!-- Campos Cheque 3ros (oculto por defecto) -->
+          <div id="cheque3rosFields" class="d-none mb-3 border rounded p-3 bg-light">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-bank me-1"></i>Datos del Cheque</h6>
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label for="chequeNumero" class="form-label form-label-sm mb-0">Nro. Cheque <span class="text-danger">*</span></label>
+                <input type="number" id="chequeNumero" class="form-control form-control-sm" min="0">
+              </div>
+              <div class="col-md-4">
+                <label for="chequeFechaVencimiento" class="form-label form-label-sm mb-0">Fecha Vto. <span class="text-danger">*</span></label>
+                <input type="date" id="chequeFechaVencimiento" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-4">
+                <label for="chequeImporte" class="form-label form-label-sm mb-0">Importe</label>
+                <input type="number" id="chequeImporte" class="form-control form-control-sm" step="0.01" min="0" disabled>
+              </div>
+              <div class="col-md-4">
+                <label for="chequeTitular" class="form-label form-label-sm mb-0">Titular</label>
+                <input type="text" id="chequeTitular" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-4">
+                <label for="chequeCuitTitular" class="form-label form-label-sm mb-0">CUIT Titular</label>
+                <input type="text" id="chequeCuitTitular" class="form-control form-control-sm" placeholder="XX-XXXXXXXX-X">
+              </div>
+              <div class="col-md-4">
+                <label for="chequeBancoEmisor" class="form-label form-label-sm mb-0">Banco Emisor</label>
+                <input type="text" id="chequeBancoEmisor" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-6">
+                <label for="chequeCuentaNumero" class="form-label form-label-sm mb-0">Nro. Cuenta</label>
+                <input type="text" id="chequeCuentaNumero" class="form-control form-control-sm">
+              </div>
             </div>
           </div>
 
@@ -216,13 +270,44 @@
 
   <!-- Modal: Detalle Venta -->
   <div class="modal fade" id="modalDetalleVenta" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-      <div class="modal-content">
-        <div class="modal-header bg-info text-white">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable" style="max-height:95vh">
+      <div class="modal-content" style="height:95vh">
+        <div class="modal-header bg-info text-white py-2">
           <h5 class="modal-title"><i class="bi bi-receipt me-2"></i>Detalle de Venta</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
-        <div class="modal-body" id="detalleVentaBody"></div>
+        <div class="modal-body overflow-auto" id="detalleVentaBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Factura Emitida -->
+  <div class="modal fade" id="modalFactura" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-dark text-white">
+          <h5 class="modal-title"><i class="bi bi-file-earmark-text me-2"></i>Comprobante</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="facturaBody"></div>
+        <div class="modal-footer justify-content-between">
+          <div>
+            <button class="btn btn-outline-success" id="btnAutorizarFactura" onclick="AutorizarFactura()">
+              <i class="bi bi-shield-check me-1"></i>Autorizar AFIP
+            </button>
+          </div>
+          <div class="d-flex gap-2">
+            <button class="btn btn-success" id="btnEnviarWA" onclick="EnviarFacturaWhatsApp()">
+              <i class="bi bi-whatsapp me-1"></i>WhatsApp
+            </button>
+            <button class="btn btn-primary" id="btnEnviarEmail" onclick="EnviarFacturaEmail()">
+              <i class="bi bi-envelope me-1"></i>Email
+            </button>
+            <button class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-lg me-1"></i>Cerrar
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

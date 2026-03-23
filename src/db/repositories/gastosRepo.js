@@ -4,7 +4,7 @@ const { newGuid, tsNow, dateToClarion } = require('../../utils/guidHelper');
 const EMPTY_GUID = '';
 
 // Create a gasto (expense) - inserts into CajaGastos + CajaDiaria
-async function CreateGasto({ guidSucursal, rubro, descripcion, importe, guidProveedores, guidBancosCuentas, guidUsuario }) {
+async function CreateGasto({ guidSucursal, rubro, descripcion, importe, medioPago, guidProveedores, guidBancosCuentas, guidBanco, guidUsuario }) {
   const pool = await getPool();
   const tx = pool.transaction();
   await tx.begin();
@@ -19,7 +19,7 @@ async function CreateGasto({ guidSucursal, rubro, descripcion, importe, guidProv
     await tx.request()
       .input('guid', sql.Char(16), guidGasto)
       .input('guidSucursal', sql.Char(16), guidSucursal)
-      .input('guidBancos', sql.Char(16), EMPTY_GUID)
+      .input('guidBancos', sql.Char(16), guidBanco || EMPTY_GUID)
       .input('guidImputacion', sql.Char(16), EMPTY_GUID)
       .input('guidProveedores', sql.Char(16), guidProveedores || EMPTY_GUID)
       .input('guidMovProv', sql.Char(16), EMPTY_GUID)
@@ -50,12 +50,12 @@ async function CreateGasto({ guidSucursal, rubro, descripcion, importe, guidProv
     await tx.request()
       .input('guid', sql.Char(16), guidCaja)
       .input('fecha', sql.Date, new Date())
-      .input('tipoComprobante', sql.VarChar(40), 'GASTO')
-      .input('descripcion', sql.Char(60), `${rubro} - ${descripcion}`.substring(0, 60))
+      .input('tipoComprobante', sql.VarChar(40), medioPago || 'EFECTIVO')
+      .input('descripcion', sql.Char(60), `Gasto - ${rubro} - ${descripcion}`.substring(0, 60))
       .input('debe', sql.Decimal(13, 2), 0)
       .input('haber', sql.Decimal(13, 2), importe)
       .input('guidSucursal', sql.Char(16), guidSucursal)
-      .input('guidBanco', sql.Char(16), EMPTY_GUID)
+      .input('guidBanco', sql.Char(16), guidBanco || EMPTY_GUID)
       .input('guidBancosCuentas', sql.Char(16), guidBancosCuentas || EMPTY_GUID)
       .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
       .input('guidCajaGastos', sql.Char(16), guidGasto)
@@ -83,7 +83,7 @@ async function CreateGasto({ guidSucursal, rubro, descripcion, importe, guidProv
 }
 
 // Create adelanto (cash withdrawal for employee) - inserts into MovimientoAdelantos + CajaGastos + CajaDiaria + Recibos
-async function CreateAdelanto({ guidSucursal, guidEmpleado, importe, observaciones, mesImputacion, guidBancosCuentas, guidUsuario }) {
+async function CreateAdelanto({ guidSucursal, guidEmpleado, importe, observaciones, mesImputacion, medioPago, guidBancosCuentas, guidBanco, guidUsuario }) {
   const pool = await getPool();
   const tx = pool.transaction();
   await tx.begin();
@@ -121,7 +121,7 @@ async function CreateAdelanto({ guidSucursal, guidEmpleado, importe, observacion
     await tx.request()
       .input('guid', sql.Char(16), guidGasto)
       .input('guidSucursal', sql.Char(16), guidSucursal)
-      .input('guidBancos', sql.Char(16), EMPTY_GUID)
+      .input('guidBancos', sql.Char(16), guidBanco || EMPTY_GUID)
       .input('guidImputacion', sql.Char(16), EMPTY_GUID)
       .input('guidProveedores', sql.Char(16), EMPTY_GUID)
       .input('guidMovProv', sql.Char(16), EMPTY_GUID)
@@ -152,12 +152,12 @@ async function CreateAdelanto({ guidSucursal, guidEmpleado, importe, observacion
     await tx.request()
       .input('guid', sql.Char(16), guidCaja)
       .input('fecha', sql.Date, new Date())
-      .input('tipoComprobante', sql.VarChar(40), 'ADELANTO')
-      .input('descripcion', sql.Char(60), (observaciones || 'Retiro de efectivo').substring(0, 60))
+      .input('tipoComprobante', sql.VarChar(40), medioPago || 'EFECTIVO')
+      .input('descripcion', sql.Char(60), `Adelanto - ${observaciones || 'Retiro de efectivo'}`.substring(0, 60))
       .input('debe', sql.Decimal(13, 2), 0)
       .input('haber', sql.Decimal(13, 2), importe)
       .input('guidSucursal', sql.Char(16), guidSucursal)
-      .input('guidBanco', sql.Char(16), EMPTY_GUID)
+      .input('guidBanco', sql.Char(16), guidBanco || EMPTY_GUID)
       .input('guidBancosCuentas', sql.Char(16), guidBancosCuentas || EMPTY_GUID)
       .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
       .input('guidCajaGastos', sql.Char(16), guidGasto)

@@ -298,6 +298,9 @@ const App = {
       case 'transferencias': RenderTransferencias(main); break;
       case 'compras': RenderCompras(main); break;
       case 'gastos': RenderGastos(main); break;
+      case 'cajadiaria': RenderCajaDiaria(main); break;
+      case 'clientes': RenderClientes(main); break;
+      case 'empleados': RenderEmpleados(main); break;
       case 'bancos': RenderBancos(main); break;
     }
   },
@@ -451,6 +454,39 @@ const POS = {
     document.getElementById('pagoComprobante').innerHTML = '';
     document.getElementById('pagoPlan').innerHTML = '';
     document.getElementById('divRecargoInfo').classList.add('d-none');
+
+    const tipoSel = GetTipoCobroPagoSel();
+    const desc = tipoSel ? (tipoSel.DESCRIPCION || '').trim().toUpperCase() : '';
+    const tipoNum = tipoSel ? tipoSel.TIPO : 0;
+
+    // Cheque 3ros: mostrar/ocultar campos
+    const esCheque3ro = desc.indexOf('CHEQUE') >= 0 && desc.indexOf('3') >= 0;
+    const divCheque = document.getElementById('cheque3rosFields');
+    if (divCheque) { esCheque3ro ? divCheque.classList.remove('d-none') : divCheque.classList.add('d-none'); }
+
+    // Cuenta bancaria: mostrar para Transferencia (4) y Deposito Bancario (8)
+    const requiereCuentaBancaria = tipoNum === 4 || tipoNum === 8;
+    const divCuentaBancaria = document.getElementById('divCuentaBancaria');
+    const selCuentaBancaria = document.getElementById('pagoCuentaBancaria');
+    if (divCuentaBancaria && selCuentaBancaria) {
+      if (requiereCuentaBancaria) {
+        divCuentaBancaria.classList.remove('d-none');
+        // Poblar con cuentas bancarias (excluir CAJA FISICA)
+        const cuentasBanco = State.bancosCuentas.filter(c =>
+          !(c.TIPOCUENTA || '').trim().toUpperCase().startsWith('CAJA')
+        );
+        selCuentaBancaria.innerHTML = '<option value="">-- Seleccione cuenta --</option>'
+          + cuentasBanco.map(c => {
+            const nombre = (c.NUMEROCUENTA || c.ALIAS || '').trim();
+            const tipo = (c.TIPOCUENTA || '').trim();
+            return `<option value="${c.GUID.trim()}" data-guidbancos="${(c.GUIDBANCOS || '').trim()}">${nombre} (${tipo})</option>`;
+          }).join('');
+      } else {
+        divCuentaBancaria.classList.add('d-none');
+        selCuentaBancaria.innerHTML = '';
+      }
+    }
+
     RenderPagosModal();
   },
 
@@ -473,6 +509,7 @@ const POS = {
     const esEfectivo = tipoDescrip.toUpperCase() === 'EFECTIVO';
     const esCtaCte = tipoMov === 'X';
     const esCreditoDev = tipoDescrip.toUpperCase().indexOf('CREDITO') >= 0 && tipoDescrip.toUpperCase().indexOf('DEV') >= 0;
+    const esCheque3ro = tipoDescrip.toUpperCase().indexOf('CHEQUE') >= 0 && tipoDescrip.toUpperCase().indexOf('3') >= 0;
 
     const compSel = GetComprobanteSel();
     const selComp = document.getElementById('pagoComprobante');
@@ -514,10 +551,28 @@ const POS = {
       }
     }
 
+    // Validación cuenta bancaria para Transferencia (4) y Deposito Bancario (8)
+    const requiereCuentaBancaria = tipoSel.TIPO === 4 || tipoSel.TIPO === 8;
+    if (requiereCuentaBancaria) {
+      const selCuenta = document.getElementById('pagoCuentaBancaria');
+      if (!selCuenta || !selCuenta.value) {
+        ShowToast('Aviso', 'Seleccione la cuenta bancaria de destino', 'info');
+        return;
+      }
+    }
+
+    // Validación cheque 3ros
+    if (esCheque3ro) {
+      const chqNum = parseInt(document.getElementById('chequeNumero').value) || 0;
+      const chqFecha = (document.getElementById('chequeFechaVencimiento').value || '').trim();
+      if (!chqNum) { ShowToast('Aviso', 'Ingrese el número de cheque', 'info'); return; }
+      if (!chqFecha) { ShowToast('Aviso', 'Ingrese la fecha de vencimiento del cheque', 'info'); return; }
+    }
+
     let descripcion = tipoDescrip;
     if (compSel) descripcion = (compSel.TIPO_COMPROBANTE || '').trim();
 
-    const pago = { tipo: tipoSel.GUID.trim(), importe, descripcion, guidBanco: '', guidBancosCuentas: '', _esEfectivo: esEfectivo, _esCtaCte: esCtaCte, _esCreditoDev: esCreditoDev };
+    const pago = { tipo: tipoSel.GUID.trim(), importe, descripcion, guidBanco: '', guidBancosCuentas: '', _esEfectivo: esEfectivo, _esCtaCte: esCtaCte, _esCreditoDev: esCreditoDev, _esCheque3ro: esCheque3ro };
 
     if (compSel) {
       pago.guidComprobante = compSel.GUID.trim();
@@ -530,6 +585,14 @@ const POS = {
         pago.guidBancosCuentas = cuentaCaja.GUID.trim();
         pago.guidBanco = (cuentaCaja.GUIDBANCOS || '').trim();
       }
+    }
+
+    // Asignar cuenta bancaria para Transferencia / Deposito Bancario
+    if (requiereCuentaBancaria) {
+      const selCuenta = document.getElementById('pagoCuentaBancaria');
+      const opt = selCuenta.options[selCuenta.selectedIndex];
+      pago.guidBancosCuentas = selCuenta.value.trim();
+      pago.guidBanco = (opt.dataset.guidbancos || '').trim();
     }
 
     // Planes
@@ -547,6 +610,23 @@ const POS = {
       const creditoData = JSON.parse(selCredito.value);
       pago.guidCreditoDevolucion = creditoData.guid;
       pago.descripcion = `Credito Dev. (${FormatMoney(creditoData.disponible)})`;
+    }
+
+    // Datos del cheque de terceros
+    if (esCheque3ro) {
+      pago.chequeNumero = parseInt(document.getElementById('chequeNumero').value) || 0;
+      pago.chequeTitular = (document.getElementById('chequeTitular').value || '').trim();
+      pago.chequeCuitTitular = (document.getElementById('chequeCuitTitular').value || '').trim();
+      pago.chequeBancoEmisor = (document.getElementById('chequeBancoEmisor').value || '').trim();
+      pago.chequeCuentaNumero = (document.getElementById('chequeCuentaNumero').value || '').trim();
+      pago.chequeFechaVencimiento = (document.getElementById('chequeFechaVencimiento').value || '').trim();
+      // Limpiar campos cheque después de agregar
+      document.getElementById('chequeNumero').value = '';
+      document.getElementById('chequeTitular').value = '';
+      document.getElementById('chequeCuitTitular').value = '';
+      document.getElementById('chequeBancoEmisor').value = '';
+      document.getElementById('chequeCuentaNumero').value = '';
+      document.getElementById('chequeFechaVencimiento').value = '';
     }
 
     POS.pagos.push(pago);
@@ -674,6 +754,7 @@ const POS = {
         guidCliente: POS.cliente ? POS.cliente.GUID : null,
         guidSucursal: State.sucursalActual,
         guidVendedor: POS.vendedor || null,
+        guidUsuario: (State.usuario && State.usuario.GUID) || '',
         nombre: POS.cliente ? (POS.cliente.NOMBRE || '').trim() : 'CONSUMIDOR FINAL',
         cuit: POS.cliente ? (POS.cliente.CUIT || '').trim() : '',
         tipoOperacion: 'VENTA',
@@ -690,6 +771,11 @@ const POS = {
       ShowToast('Venta exitosa', msg, 'success');
       POS.Reset();
       RenderPOS(document.getElementById('mainContent'));
+
+      // Si se emitió factura, mostrar el comprobante
+      if (result.guidFactura) {
+        MostrarFactura(result.guidFactura);
+      }
     } catch (err) {
       ShowToast('Error', err.message, 'error');
     } finally {
@@ -1602,6 +1688,149 @@ async function GuardarNuevoCliente() {
 }
 
 // ============================================================================
+// SECCIÓN: Factura — Modal de comprobante emitido
+// ============================================================================
+let _facturaActual = null;
+
+async function MostrarFactura(guidFactura) {
+  const body = document.getElementById('facturaBody');
+  body.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
+  new bootstrap.Modal(document.getElementById('modalFactura')).show();
+
+  try {
+    const det = await API.GetFacturaDetalle(guidFactura);
+    if (!det || !det.factura) { body.innerHTML = '<div class="alert alert-warning">No se encontró la factura.</div>'; return; }
+    _facturaActual = det;
+    const f = det.factura;
+    const tipoComp = (f.TIPO_COMPROBANTE || '').trim();
+    const tipoFact = (f.TIPO_FACTURA || '').trim();
+    const numFact = (f.NUMERO_FACTURA || '').trim();
+    const fecha = FormatFechaInt(f.FECHA);
+    const nombre = (f.NOMBRE || '').trim();
+    const cuit = (f.CUIT || '').trim();
+    const empresa = (f.NombreEmpresa || '').trim();
+    const cuitEmp = (f.CuitEmpresa || '').trim();
+    const condIva = (f.CondicionIva || '').trim();
+    const dirEmp = (f.DireccionEmpresa || '').trim();
+    const cae = (f.CAE || '').trim();
+    const fechaCae = f.FECHAVENCIMIENTOCAE ? new Date(f.FECHAVENCIMIENTOCAE).toLocaleDateString('es-AR') : '';
+
+    const tipoLabel = tipoComp === 'NCB' || tipoComp === 'NCA' ? 'NOTA DE CREDITO' : 'FACTURA';
+    const letraBg = tipoFact === 'A' ? 'primary' : tipoFact === 'B' ? 'dark' : 'secondary';
+
+    // Items
+    const itemsHTML = det.items.map(i => `
+      <tr>
+        <td><code>${(i.ARTICULO || '').trim()}</code></td>
+        <td>${(i.DESCRIPCION || '').trim()}</td>
+        <td class="text-center">${i.NUMERO || '-'}</td>
+        <td class="text-center">${i.CANTIDAD}</td>
+        <td class="text-end">${FormatMoney(i.NETO)}</td>
+        <td class="text-end">${FormatMoney(i.TOTAL)}</td>
+      </tr>
+    `).join('');
+
+    // Pagos
+    const pagosHTML = det.pagos.map(p => `
+      <tr>
+        <td><span class="badge bg-secondary">${p.TIPOCOMPROBANTE}</span></td>
+        <td>${p.DESCRIPCION}</td>
+        <td class="text-end">${FormatMoney(p.IMPORTE)}</td>
+      </tr>
+    `).join('');
+
+    // Estado AFIP
+    const estadoAfip = cae
+      ? `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>CAE: ${cae} (Vto: ${fechaCae})</span>`
+      : '<span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pendiente de autorizar</span>';
+
+    body.innerHTML = `
+      <!-- Cabecera comprobante -->
+      <div class="border rounded p-3 mb-3">
+        <div class="row align-items-center">
+          <div class="col-md-5">
+            <h6 class="fw-bold mb-1">${empresa}</h6>
+            <small class="text-muted">${dirEmp}</small><br>
+            <small class="text-muted">CUIT: ${cuitEmp} | ${condIva}</small>
+          </div>
+          <div class="col-md-2 text-center">
+            <div class="border rounded d-inline-block px-3 py-1">
+              <span class="fs-3 fw-bold text-${letraBg}">${tipoFact}</span>
+            </div>
+          </div>
+          <div class="col-md-5 text-end">
+            <h5 class="fw-bold mb-1">${tipoLabel} ${tipoFact}</h5>
+            <div class="fs-5 fw-semibold text-primary">${numFact}</div>
+            <small class="text-muted">Fecha: ${fecha}</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Datos cliente -->
+      <div class="row mb-3 px-2">
+        <div class="col-md-6">
+          <small class="text-muted">Cliente</small>
+          <div class="fw-semibold">${nombre || 'CONSUMIDOR FINAL'}</div>
+        </div>
+        <div class="col-md-3">
+          <small class="text-muted">CUIT</small>
+          <div class="fw-semibold">${cuit || '-'}</div>
+        </div>
+        <div class="col-md-3 text-end">
+          ${estadoAfip}
+        </div>
+      </div>
+
+      <!-- Items -->
+      <table class="table table-sm mb-2">
+        <thead class="table-light">
+          <tr><th>Codigo</th><th>Descripcion</th><th class="text-center">Talle</th><th class="text-center">Cant.</th><th class="text-end">Precio</th><th class="text-end">Subtotal</th></tr>
+        </thead>
+        <tbody>${itemsHTML}</tbody>
+      </table>
+
+      <!-- Totales -->
+      <div class="row mb-3">
+        <div class="col-md-6">
+          <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>Medio de Pago</th><th>Detalle</th><th class="text-end">Importe</th></tr></thead>
+            <tbody>${pagosHTML}</tbody>
+          </table>
+        </div>
+        <div class="col-md-6">
+          <div class="border rounded p-2">
+            <div class="row small">
+              <div class="col-6">Neto Gravado:</div><div class="col-6 text-end">${FormatMoney(f.TOTAL_NETO21 || 0)}</div>
+              <div class="col-6">IVA 21%:</div><div class="col-6 text-end">${FormatMoney(f.TOTAL_IVA21 || 0)}</div>
+              ${(f.TOTAL_EXENTO || 0) > 0 ? `<div class="col-6">Exento:</div><div class="col-6 text-end">${FormatMoney(f.TOTAL_EXENTO)}</div>` : ''}
+              ${(f.TOTAL_NOGRAVADO || 0) > 0 ? `<div class="col-6">No Gravado:</div><div class="col-6 text-end">${FormatMoney(f.TOTAL_NOGRAVADO)}</div>` : ''}
+            </div>
+            <hr class="my-1">
+            <div class="row fw-bold fs-5">
+              <div class="col-6">TOTAL:</div><div class="col-6 text-end text-success">${FormatMoney(f.TOTAL || 0)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    body.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+function AutorizarFactura() {
+  ShowToast('Autorizar AFIP', 'Funcionalidad pendiente de implementar', 'info');
+}
+
+function EnviarFacturaWhatsApp() {
+  ShowToast('WhatsApp', 'Funcionalidad pendiente de implementar', 'info');
+}
+
+function EnviarFacturaEmail() {
+  ShowToast('Email', 'Funcionalidad pendiente de implementar', 'info');
+}
+
+// ============================================================================
 // SECCIÓN: Ventas (Historial)
 // ============================================================================
 function RenderVentas(container) {
@@ -2264,6 +2493,7 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
       guidCliente,
       guidSucursal: State.sucursalActual,
       guidVendedor: null,
+      guidUsuario: (State.usuario && State.usuario.GUID) || '',
       nombre,
       items,
       motivo,
@@ -2798,6 +3028,7 @@ async function ConfirmarCambioConVenta() {
       guidCliente: cambio.guidCliente,
       guidSucursal: State.sucursalActual,
       guidVendedor: POS.vendedor,
+      guidUsuario: (State.usuario && State.usuario.GUID) || '',
       nombre: cambio.nombre,
       motivo: cambio.motivo,
       tipoCambio: cambio.tipoCambio,
@@ -3200,6 +3431,16 @@ function RenderGastos(container) {
                   <label class="form-label fw-semibold">Importe <span class="text-danger">*</span></label>
                   <input type="number" id="gastoImporte" class="form-control" step="0.01" min="0" placeholder="0.00">
                 </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">Medio de Pago <span class="text-danger">*</span></label>
+                  <select id="gastoMedioPago" class="form-select">
+                    <option value="">Cargando...</option>
+                  </select>
+                </div>
+                <div class="col-md-4 d-none" id="divGastoCuentaBancaria">
+                  <label class="form-label fw-semibold">Cuenta Bancaria</label>
+                  <select id="gastoCuentaBancaria" class="form-select"></select>
+                </div>
               </div>
               <div class="text-end mt-3">
                 <button class="btn btn-primary btn-lg" onclick="ConfirmarGasto()">
@@ -3232,6 +3473,16 @@ function RenderGastos(container) {
                 <div class="col-md-3">
                   <label class="form-label fw-semibold">Observaciones</label>
                   <input type="text" id="adelantoObs" class="form-control" placeholder="Observaciones...">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">Medio de Pago <span class="text-danger">*</span></label>
+                  <select id="adelantoMedioPago" class="form-select">
+                    <option value="">Cargando...</option>
+                  </select>
+                </div>
+                <div class="col-md-4 d-none" id="divAdelantoCuentaBancaria">
+                  <label class="form-label fw-semibold">Cuenta Bancaria</label>
+                  <select id="adelantoCuentaBancaria" class="form-select"></select>
                 </div>
               </div>
               <div class="text-end mt-3">
@@ -3268,6 +3519,7 @@ function RenderGastos(container) {
     </div>
   `;
   CargarEmpleadosGastos();
+  CargarMediosPagoEgreso();
 }
 
 async function CargarEmpleadosGastos() {
@@ -3281,21 +3533,112 @@ async function CargarEmpleadosGastos() {
   }
 }
 
+function CargarMediosPagoEgreso() {
+  // Filtrar tipos A (ambos) y E (egreso)
+  const tiposEgreso = State.tiposCobrosPagos.filter(t => {
+    const mov = (t.TIPOMOVIMIENTO || '').trim();
+    return mov === 'A' || mov === 'E';
+  });
+  const opciones = '<option value="">Seleccione...</option>'
+    + tiposEgreso.map(t => {
+      const desc = (t.DESCRIPCION || '').trim();
+      return `<option value="${t.GUID.trim()}" data-tipo="${t.TIPO}">${desc}</option>`;
+    }).join('');
+
+  const selGasto = document.getElementById('gastoMedioPago');
+  if (selGasto) {
+    selGasto.innerHTML = opciones;
+    selGasto.onchange = function () { OnMedioPagoEgresoChange('gastoMedioPago', 'divGastoCuentaBancaria', 'gastoCuentaBancaria'); };
+  }
+  const selAdelanto = document.getElementById('adelantoMedioPago');
+  if (selAdelanto) {
+    selAdelanto.innerHTML = opciones;
+    selAdelanto.onchange = function () { OnMedioPagoEgresoChange('adelantoMedioPago', 'divAdelantoCuentaBancaria', 'adelantoCuentaBancaria'); };
+  }
+}
+
+function OnMedioPagoEgresoChange(selId, divCuentaId, selCuentaId) {
+  const sel = document.getElementById(selId);
+  const opt = sel.options[sel.selectedIndex];
+  const tipoNum = parseInt(opt?.dataset?.tipo) || 0;
+  const divCuenta = document.getElementById(divCuentaId);
+  const selCuenta = document.getElementById(selCuentaId);
+
+  // Transferencia (4) o Deposito (8) o Cheque Propio (6) → mostrar cuenta bancaria
+  const requiereCuenta = tipoNum === 4 || tipoNum === 8 || tipoNum === 6;
+  if (divCuenta && selCuenta) {
+    if (requiereCuenta) {
+      divCuenta.classList.remove('d-none');
+      const cuentasBanco = State.bancosCuentas.filter(c =>
+        !(c.TIPOCUENTA || '').trim().toUpperCase().startsWith('CAJA')
+      );
+      selCuenta.innerHTML = '<option value="">-- Seleccione cuenta --</option>'
+        + cuentasBanco.map(c => {
+          const nombre = (c.NUMEROCUENTA || c.ALIAS || '').trim();
+          const tipo = (c.TIPOCUENTA || '').trim();
+          return `<option value="${c.GUID.trim()}" data-guidbancos="${(c.GUIDBANCOS || '').trim()}">${nombre} (${tipo})</option>`;
+        }).join('');
+    } else {
+      divCuenta.classList.add('d-none');
+      selCuenta.innerHTML = '';
+    }
+  }
+}
+
+function GetMedioPagoEgresoData(selId, selCuentaId) {
+  const sel = document.getElementById(selId);
+  if (!sel || !sel.value) return null;
+  const opt = sel.options[sel.selectedIndex];
+  const desc = (opt.textContent || '').trim();
+  const tipoNum = parseInt(opt.dataset.tipo) || 0;
+
+  let guidBancosCuentas = '';
+  let guidBanco = '';
+
+  // Si es EFECTIVO, auto-asignar cuenta caja
+  if (desc.toUpperCase() === 'EFECTIVO') {
+    const cuentaCaja = GetCuentaCajaSucursal();
+    if (cuentaCaja) {
+      guidBancosCuentas = cuentaCaja.GUID.trim();
+      guidBanco = (cuentaCaja.GUIDBANCOS || '').trim();
+    }
+  }
+
+  // Si requiere cuenta bancaria seleccionada
+  const requiereCuenta = tipoNum === 4 || tipoNum === 8 || tipoNum === 6;
+  if (requiereCuenta) {
+    const selCuenta = document.getElementById(selCuentaId);
+    if (selCuenta && selCuenta.value) {
+      guidBancosCuentas = selCuenta.value.trim();
+      const optCta = selCuenta.options[selCuenta.selectedIndex];
+      guidBanco = (optCta.dataset.guidbancos || '').trim();
+    }
+  }
+
+  return { descripcion: desc, guidBancosCuentas, guidBanco };
+}
+
 async function ConfirmarGasto() {
   const rubro = document.getElementById('gastoRubro').value;
   const descripcion = (document.getElementById('gastoDescripcion').value || '').trim();
   const importe = parseFloat(document.getElementById('gastoImporte').value) || 0;
 
+  const medioPago = GetMedioPagoEgresoData('gastoMedioPago', 'gastoCuentaBancaria');
+
   if (!rubro) { ShowToast('Aviso', 'Seleccione un rubro', 'error'); return; }
   if (!descripcion) { ShowToast('Aviso', 'Ingrese una descripcion', 'error'); return; }
   if (importe <= 0) { ShowToast('Aviso', 'El importe debe ser mayor a 0', 'error'); return; }
+  if (!medioPago) { ShowToast('Aviso', 'Seleccione un medio de pago', 'error'); return; }
 
   try {
     await API.CreateGasto({
       guidSucursal: State.sucursalActual,
       rubro,
-      descripcion,
+      descripcion: `${descripcion}`,
       importe,
+      medioPago: medioPago.descripcion,
+      guidBancosCuentas: medioPago.guidBancosCuentas,
+      guidBanco: medioPago.guidBanco,
       guidUsuario: (State.usuario && State.usuario.GUID) || '',
     });
     ShowToast('Gasto registrado', `${rubro} - $${importe.toFixed(2)}`, 'success');
@@ -3313,18 +3656,22 @@ async function ConfirmarAdelanto() {
   const mesImputacion = document.getElementById('adelantoMes').value || '';
   const observaciones = (document.getElementById('adelantoObs').value || '').trim();
 
+  const medioPago = GetMedioPagoEgresoData('adelantoMedioPago', 'adelantoCuentaBancaria');
+
   if (!guidEmpleado) { ShowToast('Aviso', 'Seleccione un empleado', 'error'); return; }
   if (importe <= 0) { ShowToast('Aviso', 'El importe debe ser mayor a 0', 'error'); return; }
+  if (!medioPago) { ShowToast('Aviso', 'Seleccione un medio de pago', 'error'); return; }
 
   try {
-    const cuentaCaja = GetCuentaCajaSucursal();
     await API.CreateAdelanto({
       guidSucursal: State.sucursalActual,
       guidEmpleado,
       importe,
       observaciones,
       mesImputacion,
-      guidBancosCuentas: cuentaCaja ? cuentaCaja.GUID : '',
+      medioPago: medioPago.descripcion,
+      guidBancosCuentas: medioPago.guidBancosCuentas,
+      guidBanco: medioPago.guidBanco,
       guidUsuario: (State.usuario && State.usuario.GUID) || '',
     });
     ShowToast('Retiro registrado', `$${importe.toFixed(2)}`, 'success');
@@ -3789,6 +4136,604 @@ async function ToggleDetalleCompra(guid, rowId) {
   } catch (err) {
     detailRow.innerHTML = `<td colspan="${colspan}"><div class="alert alert-danger mb-0 py-1">${err.message}</div></td>`;
   }
+}
+
+// ============================================================================
+// SECCIÓN: CLIENTES — Browse + Movimientos + Comprobantes
+// ============================================================================
+function RenderClientes(container) {
+  container.innerHTML = `
+    <h4 class="mb-3"><i class="bi bi-people me-2"></i>Clientes</h4>
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-6">
+            <input type="text" id="clienteSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIT..." onkeyup="BuscarClientes()">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="clientesResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
+  `;
+  BuscarClientes();
+}
+
+async function BuscarClientes() {
+  const search = (document.getElementById('clienteSearch')?.value || '').trim();
+  const div = document.getElementById('clientesResultados');
+  try {
+    const clientes = await API.GetClientes(search || undefined);
+    if (clientes.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron clientes.</div>'; return; }
+    div.innerHTML = `
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead class="table-light">
+            <tr><th>Nombre</th><th>CUIT</th><th>Documento</th><th>Celular</th><th>Email</th><th class="text-end">Saldo</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${clientes.map(c => {
+              const nombre = (c.NOMBRE || '').trim();
+              const saldo = c.SALDO || 0;
+              return `<tr>
+                <td class="fw-semibold">${nombre}</td>
+                <td>${(c.CUIT || '').trim()}</td>
+                <td>${(c.DOCUMENTO || '').trim()}</td>
+                <td>${(c.CELULAR || '').trim()}</td>
+                <td>${(c.EMAIL || '').trim()}</td>
+                <td class="text-end ${saldo > 0 ? 'text-danger' : saldo < 0 ? 'text-success' : ''}">${FormatMoney(saldo)}</td>
+                <td>
+                  <button class="btn btn-sm btn-outline-primary" onclick="VerMovimientosCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')">
+                    <i class="bi bi-list-ul"></i>
+                  </button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+async function VerMovimientosCliente(guid, nombre) {
+  const hoy = TodayISO();
+  const body = document.getElementById('detalleVentaBody');
+  document.querySelector('#modalDetalleVenta .modal-title').innerHTML = `<i class="bi bi-person me-2"></i>${nombre}`;
+  body.innerHTML = `
+    <div class="row g-2 mb-3 align-items-end">
+      <div class="col-md-3"><label class="form-label mb-0">Desde</label><input type="date" id="cliMovDesde" class="form-control form-control-sm" value="${hoy}"></div>
+      <div class="col-md-3"><label class="form-label mb-0">Hasta</label><input type="date" id="cliMovHasta" class="form-control form-control-sm" value="${hoy}"></div>
+      <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" onclick="CargarMovimientosCliente('${guid}')"><i class="bi bi-search me-1"></i>Buscar</button></div>
+    </div>
+    <ul class="nav nav-tabs mb-3"><li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabCliMov">Movimientos Cta. Cte.</a></li><li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabCliComp">Comprobantes</a></li></ul>
+    <div class="tab-content">
+      <div class="tab-pane fade show active" id="tabCliMov"><div id="cliMovResultados"></div></div>
+      <div class="tab-pane fade" id="tabCliComp"><div id="cliCompResultados"></div></div>
+    </div>
+  `;
+  new bootstrap.Modal(document.getElementById('modalDetalleVenta')).show();
+  CargarMovimientosCliente(guid);
+}
+
+async function CargarMovimientosCliente(guid) {
+  const desde = document.getElementById('cliMovDesde')?.value || '';
+  const hasta = document.getElementById('cliMovHasta')?.value || '';
+  const params = {};
+  if (desde) params.desde = desde;
+  if (hasta) params.hasta = hasta;
+
+  const divMov = document.getElementById('cliMovResultados');
+  const divComp = document.getElementById('cliCompResultados');
+  divMov.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+  divComp.innerHTML = divMov.innerHTML;
+
+  try {
+    const [movs, facts] = await Promise.all([
+      API.GetClienteMovimientos(guid, params),
+      API.GetClienteFacturas(guid, params),
+    ]);
+
+    // Movimientos Cta. Cte.
+    if (movs.length === 0) {
+      divMov.innerHTML = '<div class="alert alert-info py-2">Sin movimientos en el periodo.</div>';
+    } else {
+      let saldoAcum = 0;
+      divMov.innerHTML = `<table class="table table-sm table-hover"><thead class="table-light"><tr><th>Fecha</th><th>Descripcion</th><th class="text-end">Debe</th><th class="text-end">Haber</th></tr></thead><tbody>
+        ${movs.map(m => {
+          const debe = m.DEBE || 0; const haber = m.HABER || 0;
+          saldoAcum += debe - haber;
+          return `<tr><td>${FormatFechaInt(m.FECHA)}</td><td class="small">${(m.DESCRIPCION || '').trim()}</td><td class="text-end ${debe > 0 ? 'text-danger' : ''}">${debe > 0 ? FormatMoney(debe) : ''}</td><td class="text-end ${haber > 0 ? 'text-success' : ''}">${haber > 0 ? FormatMoney(haber) : ''}</td></tr>`;
+        }).join('')}
+      </tbody><tfoot class="table-light"><tr class="fw-bold"><td colspan="2" class="text-end">Saldo periodo:</td><td colspan="2" class="text-end ${saldoAcum >= 0 ? 'text-danger' : 'text-success'}">${FormatMoney(saldoAcum)}</td></tr></tfoot></table>`;
+    }
+
+    // Comprobantes
+    if (facts.length === 0) {
+      divComp.innerHTML = '<div class="alert alert-info py-2">Sin comprobantes en el periodo.</div>';
+    } else {
+      divComp.innerHTML = `<table class="table table-sm table-hover"><thead class="table-light"><tr><th>Numero</th><th>Tipo</th><th>Fecha</th><th class="text-end">Total</th><th>AFIP</th><th></th></tr></thead><tbody>
+        ${facts.map(f => {
+          const tipo = (f.TIPO_COMPROBANTE || '').trim();
+          const cae = (f.CAE || '').trim();
+          const tipoLabel = tipo === 'NCB' || tipo === 'NCA' ? 'NC' : tipo === 'NDB' || tipo === 'NDA' ? 'ND' : 'FC';
+          const badgeColor = tipoLabel === 'NC' ? 'warning text-dark' : tipoLabel === 'ND' ? 'danger' : 'success';
+          const afipBadge = cae ? '<span class="badge bg-success">CAE</span>' : '<span class="badge bg-secondary">Pendiente</span>';
+          return `<tr>
+            <td class="fw-semibold">${(f.NUMERO_FACTURA || '').trim()}</td>
+            <td><span class="badge bg-${badgeColor}">${tipoLabel} ${(f.TIPO_FACTURA || '').trim()}</span></td>
+            <td>${FormatFechaInt(f.FECHA)}</td>
+            <td class="text-end fw-semibold">${FormatMoney(f.TOTAL || 0)}</td>
+            <td>${afipBadge}</td>
+            <td>
+              <button class="btn btn-sm btn-outline-dark" onclick="MostrarFactura('${f.GUID.trim()}')" title="Ver comprobante"><i class="bi bi-eye"></i></button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody></table>`;
+    }
+  } catch (err) {
+    divMov.innerHTML = `<div class="alert alert-danger py-2">${err.message}</div>`;
+  }
+}
+
+// ============================================================================
+// SECCIÓN: EMPLEADOS — Browse + Adelantos
+// ============================================================================
+function RenderEmpleados(container) {
+  const hoy = TodayISO();
+  container.innerHTML = `
+    <h4 class="mb-3"><i class="bi bi-person-badge me-2"></i>Empleados</h4>
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-4">
+            <input type="text" id="empleadoSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIL...">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label mb-0">Desde</label>
+            <input type="date" id="empDesde" class="form-control form-control-sm" value="${hoy}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label mb-0">Hasta</label>
+            <input type="date" id="empHasta" class="form-control form-control-sm" value="${hoy}">
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-primary w-100" onclick="BuscarEmpleados()"><i class="bi bi-search me-1"></i>Buscar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="empleadosResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
+  `;
+  BuscarEmpleados();
+}
+
+async function BuscarEmpleados() {
+  const search = (document.getElementById('empleadoSearch')?.value || '').trim();
+  const desde = document.getElementById('empDesde')?.value || '';
+  const hasta = document.getElementById('empHasta')?.value || '';
+  const div = document.getElementById('empleadosResultados');
+
+  const params = {};
+  if (search) params.search = search;
+  if (desde) params.desde = desde;
+  if (hasta) params.hasta = hasta;
+  const q = new URLSearchParams(params).toString();
+
+  try {
+    const empleados = await API.GetEmpleados(undefined);
+    // Si hay fechas, hacer la query con adelantos
+    let empConAdv = empleados;
+    if (desde || hasta) {
+      const resp = await fetch(`/api/empleados?${q}`);
+      empConAdv = await resp.json();
+    }
+
+    if (empConAdv.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron empleados.</div>'; return; }
+    div.innerHTML = `
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead class="table-light">
+            <tr><th>Nombre</th><th>Documento</th><th>CUIL</th><th>Celular</th><th>Tarea</th><th>Estado</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${empConAdv.map(e => {
+              const nombre = (e.NOMBRE || '').trim();
+              const estado = (e.ESTADO || '').trim();
+              const estadoBadge = estado === 'ACTIVO' ? 'success' : 'secondary';
+              const tieneMovs = (e.CantAdelantos || 0) > 0;
+              const btnClass = tieneMovs ? 'btn-danger' : 'btn-outline-secondary';
+              const totalAdv = e.TotalAdelantos || 0;
+              const badgeAdv = tieneMovs ? `<span class="badge bg-danger ms-1">${e.CantAdelantos} - ${FormatMoney(totalAdv)}</span>` : '';
+              return `<tr${tieneMovs ? ' class="table-warning"' : ''}>
+                <td class="fw-semibold">${nombre}${badgeAdv}</td>
+                <td>${(e.DOCUMENTO || '').trim()}</td>
+                <td>${(e.CUIL || '').trim()}</td>
+                <td>${(e.CELULAR || '').trim()}</td>
+                <td>${(e.TAREA || '').trim()}</td>
+                <td><span class="badge bg-${estadoBadge}">${estado || '-'}</span></td>
+                <td>
+                  <button class="btn btn-sm ${btnClass}" onclick="VerAdelantosEmpleado('${e.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')">
+                    <i class="bi bi-cash-stack"></i>
+                  </button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+async function VerAdelantosEmpleado(guid, nombre) {
+  const desde = document.getElementById('empDesde')?.value || TodayISO();
+  const hasta = document.getElementById('empHasta')?.value || TodayISO();
+  const body = document.getElementById('detalleVentaBody');
+  document.querySelector('#modalDetalleVenta .modal-title').innerHTML = `<i class="bi bi-person-badge me-2"></i>${nombre} - Adelantos`;
+  body.innerHTML = `
+    <div class="row g-2 mb-3 align-items-end">
+      <div class="col-md-3"><label class="form-label mb-0">Desde</label><input type="date" id="empAdvDesde" class="form-control form-control-sm" value="${desde}"></div>
+      <div class="col-md-3"><label class="form-label mb-0">Hasta</label><input type="date" id="empAdvHasta" class="form-control form-control-sm" value="${hasta}"></div>
+      <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" onclick="CargarAdelantosEmpleado('${guid}')"><i class="bi bi-search me-1"></i>Buscar</button></div>
+    </div>
+    <div id="empAdvResultados"><div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div></div>
+  `;
+  new bootstrap.Modal(document.getElementById('modalDetalleVenta')).show();
+  CargarAdelantosEmpleado(guid);
+}
+
+async function CargarAdelantosEmpleado(guid) {
+  const desde = document.getElementById('empAdvDesde')?.value || '';
+  const hasta = document.getElementById('empAdvHasta')?.value || '';
+  const params = {};
+  if (desde) params.desde = desde;
+  if (hasta) params.hasta = hasta;
+
+  const div = document.getElementById('empAdvResultados');
+  div.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+
+  try {
+    const adelantos = await API.GetEmpleadoAdelantos(guid, params);
+    if (adelantos.length === 0) {
+      div.innerHTML = '<div class="alert alert-info py-2">Sin adelantos en el periodo.</div>';
+      return;
+    }
+    let totalDebe = 0, totalHaber = 0;
+    adelantos.forEach(a => { totalDebe += (a.Debe || 0); totalHaber += (a.Haber || 0); });
+
+    div.innerHTML = `
+      <table class="table table-sm table-hover">
+        <thead class="table-light">
+          <tr><th>Fecha</th><th>Observaciones</th><th>Mes Imputacion</th><th>Sucursal</th><th class="text-end">Debe</th><th class="text-end">Haber</th><th class="text-end">Saldo</th></tr>
+        </thead>
+        <tbody>
+          ${adelantos.map(a => {
+            const fecha = a.Fecha ? new Date(a.Fecha).toLocaleDateString('es-AR') : '';
+            return `<tr>
+              <td>${fecha}</td>
+              <td class="small">${(a.Observaciones || '').trim()}</td>
+              <td>${(a.MesImputacion || '').trim()}</td>
+              <td class="small">${(a.Sucursal || '').trim()}</td>
+              <td class="text-end text-danger">${(a.Debe || 0) > 0 ? FormatMoney(a.Debe) : ''}</td>
+              <td class="text-end text-success">${(a.Haber || 0) > 0 ? FormatMoney(a.Haber) : ''}</td>
+              <td class="text-end fw-semibold">${FormatMoney(a.Saldo || 0)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot class="table-light">
+          <tr class="fw-bold">
+            <td colspan="4" class="text-end">TOTALES:</td>
+            <td class="text-end text-danger">${FormatMoney(totalDebe)}</td>
+            <td class="text-end text-success">${FormatMoney(totalHaber)}</td>
+            <td class="text-end">${FormatMoney(totalDebe - totalHaber)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `;
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger py-2">${err.message}</div>`; }
+}
+
+// ============================================================================
+// SECCIÓN: CAJA DIARIA — Resumen de movimientos del día
+// ============================================================================
+function RenderCajaDiaria(container) {
+  const hoy = TodayISO();
+  const sucOpts = State.sucursales.map(s =>
+    `<option value="${s.GUID}" ${s.GUID === State.sucursalActual ? 'selected' : ''}>${(s.NOMBRE || '').trim()}</option>`
+  ).join('');
+
+  container.innerHTML = `
+    <h4 class="mb-3"><i class="bi bi-journal-text me-2"></i>Caja Diaria</h4>
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-2">
+            <label class="form-label fw-semibold mb-1">Desde</label>
+            <input type="date" id="cdDesde" class="form-control" value="${hoy}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold mb-1">Hasta</label>
+            <input type="date" id="cdHasta" class="form-control" value="${hoy}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold mb-1">Sucursal</label>
+            <select id="cdSucursal" class="form-select">
+              <option value="">Todas</option>
+              ${sucOpts}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold mb-1">Usuario</label>
+            <select id="cdUsuario" class="form-select">
+              <option value="">Todos</option>
+              <option value="${State.usuario ? State.usuario.GUID : ''}" selected>${State.usuario ? (State.usuario.NOMBRE || '').trim() : 'Yo'}</option>
+            </select>
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button class="btn btn-primary w-100" onclick="BuscarCajaDiaria()"><i class="bi bi-search me-1"></i>Emitir</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="cdResultados"></div>
+  `;
+
+  // Cargar lista de usuarios para el filtro
+  LoadUsuariosCajaDiaria();
+  BuscarCajaDiaria();
+}
+
+async function LoadUsuariosCajaDiaria() {
+  try {
+    const usuarios = await API.GetUsuarios();
+    const sel = document.getElementById('cdUsuario');
+    if (!sel) return;
+    const currentVal = sel.value;
+    sel.innerHTML = '<option value="">Todos</option>'
+      + usuarios.map(u => {
+        const nombre = (u.NOMBRE || '').trim();
+        const selected = u.GUID === currentVal ? 'selected' : '';
+        return `<option value="${u.GUID}" ${selected}>${nombre}</option>`;
+      }).join('');
+  } catch (e) { /* silenciar */ }
+}
+
+async function BuscarCajaDiaria() {
+  const desde = document.getElementById('cdDesde').value;
+  const hasta = document.getElementById('cdHasta').value;
+  const guidSucursal = document.getElementById('cdSucursal').value;
+  const guidUsuario = document.getElementById('cdUsuario').value;
+  const div = document.getElementById('cdResultados');
+  if (!div) return;
+
+  div.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
+
+  try {
+    const params = {};
+    if (desde) params.desde = desde;
+    if (hasta) params.hasta = hasta;
+    if (guidSucursal) params.guidSucursal = guidSucursal;
+    if (guidUsuario) params.guidUsuario = guidUsuario;
+
+    const [movimientos, resumen] = await Promise.all([
+      API.GetCajaDiaria(params),
+      API.GetCajaDiariaResumen(params),
+    ]);
+
+    if (movimientos.length === 0) {
+      div.innerHTML = '<div class="alert alert-info">No se encontraron movimientos en el período seleccionado.</div>';
+      return;
+    }
+
+    // Calcular totales
+    let totalDebe = 0, totalHaber = 0;
+    movimientos.forEach(m => { totalDebe += (m.DEBE || 0); totalHaber += (m.HABER || 0); });
+    const saldoCaja = totalDebe - totalHaber;
+
+    // Tarjetas resumen
+    const resumenHTML = resumen.map(r => {
+      const cat = (r.Categoria || '').trim();
+      const debe = r.TotalDebe || 0;
+      const haber = r.TotalHaber || 0;
+      const neto = debe - haber;
+      const icon = CajaDiariaIcono(cat);
+      const color = neto >= 0 ? 'success' : 'danger';
+      return `
+        <div class="col-md-3 col-sm-6 mb-2">
+          <div class="card border-0 shadow-sm h-100">
+            <div class="card-body p-3">
+              <div class="d-flex justify-content-between align-items-center">
+                <div>
+                  <small class="text-muted">${cat} <span class="badge bg-secondary">${r.Cantidad}</span></small>
+                  <div class="fw-bold text-${color}">${FormatMoney(neto)}</div>
+                </div>
+                <i class="bi ${icon} fs-3 text-muted"></i>
+              </div>
+              ${debe > 0 && haber > 0 ? `<small class="text-muted">Ingr: ${FormatMoney(debe)} | Egr: ${FormatMoney(haber)}</small>` : ''}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Tabla de movimientos
+    const filas = movimientos.map(m => {
+      const tipo = (m.TIPOCOMPROBANTE || '').trim();
+      const desc = (m.DESCRIPCION || '').trim();
+      const debe = m.DEBE || 0;
+      const haber = m.HABER || 0;
+      const fecha = m.FECHA ? new Date(m.FECHA).toLocaleDateString('es-AR') : '';
+      const tercero = (m.Cliente || m.Proveedor || m.Empleado || '').trim();
+      const cuenta = (m.CuentaBancaria || '').trim();
+      const tipoCta = (m.TipoCuenta || '').trim();
+      const usuario = (m.Usuario || '').trim();
+      const esEgreso = haber > 0;
+      const badgeColor = esEgreso ? 'danger' : CajaDiariaBadge(tipo);
+
+      return `<tr>
+        <td class="small">${fecha}</td>
+        <td><span class="badge bg-${badgeColor}">${tipo}</span></td>
+        <td class="small">${desc}</td>
+        <td class="small">${tercero}</td>
+        <td class="small">${cuenta ? cuenta + (tipoCta ? ' (' + tipoCta + ')' : '') : ''}</td>
+        <td class="small">${usuario}</td>
+        <td class="text-end fw-semibold ${debe > 0 ? 'text-success' : ''}">${debe > 0 ? FormatMoney(debe) : ''}</td>
+        <td class="text-end fw-semibold ${haber > 0 ? 'text-danger' : ''}">${haber > 0 ? FormatMoney(haber) : ''}</td>
+      </tr>`;
+    }).join('');
+
+    div.innerHTML = `
+      <!-- Resumen por tipo -->
+      <div class="row mb-3">
+        <div class="col-md-4 mb-2">
+          <div class="card border-success shadow-sm">
+            <div class="card-body p-3 text-center">
+              <small class="text-muted">Total Ingresos</small>
+              <div class="fs-4 fw-bold text-success">${FormatMoney(totalDebe)}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 mb-2">
+          <div class="card border-danger shadow-sm">
+            <div class="card-body p-3 text-center">
+              <small class="text-muted">Total Egresos</small>
+              <div class="fs-4 fw-bold text-danger">${FormatMoney(totalHaber)}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 mb-2">
+          <div class="card border-primary shadow-sm">
+            <div class="card-body p-3 text-center">
+              <small class="text-muted">Saldo Caja</small>
+              <div class="fs-4 fw-bold text-${saldoCaja >= 0 ? 'primary' : 'danger'}">${FormatMoney(saldoCaja)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detalle por tipo de comprobante -->
+      <div class="row mb-3">${resumenHTML}</div>
+
+      <!-- Tabla de movimientos -->
+      <div class="card shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <h6 class="mb-0"><i class="bi bi-list-ul me-1"></i>Detalle de Movimientos (${movimientos.length})</h6>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo</th>
+                  <th>Descripcion</th>
+                  <th>Tercero</th>
+                  <th>Cuenta</th>
+                  <th>Usuario</th>
+                  <th class="text-end">Ingreso</th>
+                  <th class="text-end">Egreso</th>
+                </tr>
+              </thead>
+              <tbody>${filas}</tbody>
+              <tfoot class="table-light">
+                <tr class="fw-bold">
+                  <td colspan="6" class="text-end">TOTALES:</td>
+                  <td class="text-end text-success">${FormatMoney(totalDebe)}</td>
+                  <td class="text-end text-danger">${FormatMoney(totalHaber)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resumen por Tipo de Cobro/Pago -->
+      <div class="card shadow-sm mt-3">
+        <div class="card-header bg-white">
+          <h6 class="mb-0"><i class="bi bi-bar-chart-line me-1"></i>Resumen por Medio de Cobro/Pago</h6>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Medio de Cobro/Pago</th>
+                  <th class="text-end">Ingresos</th>
+                  <th class="text-end">Egresos</th>
+                  <th class="text-end">Saldo</th>
+                </tr>
+              </thead>
+              <tbody>${BuildResumenPorTipo(movimientos)}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+function BuildResumenPorTipo(movimientos) {
+  const mapa = {};
+  movimientos.forEach(m => {
+    const tipo = (m.TIPOCOMPROBANTE || '').trim();
+    if (!mapa[tipo]) mapa[tipo] = { ingresos: 0, egresos: 0 };
+    mapa[tipo].ingresos += (m.DEBE || 0);
+    mapa[tipo].egresos += (m.HABER || 0);
+  });
+
+  const claves = Object.keys(mapa).sort();
+  let totalIng = 0, totalEgr = 0;
+
+  const filas = claves.map(tipo => {
+    const r = mapa[tipo];
+    const saldo = r.ingresos - r.egresos;
+    totalIng += r.ingresos;
+    totalEgr += r.egresos;
+    const badgeColor = CajaDiariaBadge(tipo);
+    return `<tr>
+      <td><span class="badge bg-${badgeColor}">${tipo}</span></td>
+      <td class="text-end ${r.ingresos > 0 ? 'text-success' : ''}">${r.ingresos > 0 ? FormatMoney(r.ingresos) : '-'}</td>
+      <td class="text-end ${r.egresos > 0 ? 'text-danger' : ''}">${r.egresos > 0 ? FormatMoney(r.egresos) : '-'}</td>
+      <td class="text-end fw-semibold ${saldo >= 0 ? 'text-success' : 'text-danger'}">${FormatMoney(saldo)}</td>
+    </tr>`;
+  }).join('');
+
+  const totalSaldo = totalIng - totalEgr;
+  return filas + `<tr class="table-light fw-bold">
+    <td>TOTALES</td>
+    <td class="text-end text-success">${FormatMoney(totalIng)}</td>
+    <td class="text-end text-danger">${FormatMoney(totalEgr)}</td>
+    <td class="text-end ${totalSaldo >= 0 ? 'text-success' : 'text-danger'}">${FormatMoney(totalSaldo)}</td>
+  </tr>`;
+}
+
+function CajaDiariaIcono(tipo) {
+  const t = tipo.toUpperCase();
+  if (t.includes('EFECTIVO'))      return 'bi-cash-stack';
+  if (t.includes('TARJETA'))       return 'bi-credit-card';
+  if (t.includes('TRANSFERENCIA')) return 'bi-arrow-left-right';
+  if (t.includes('MERCADO'))       return 'bi-phone';
+  if (t.includes('CHEQUE'))        return 'bi-file-earmark-check';
+  if (t.includes('DEPOSITO'))      return 'bi-bank';
+  if (t.includes('GASTO'))         return 'bi-bag-dash';
+  if (t.includes('ADELANTO'))      return 'bi-person-dash';
+  if (t.includes('CUENTA'))        return 'bi-person-lines-fill';
+  return 'bi-receipt';
+}
+
+function CajaDiariaBadge(tipo) {
+  const t = tipo.toUpperCase();
+  if (t.includes('GASTO'))         return 'danger';
+  if (t.includes('ADELANTO'))      return 'danger';
+  if (t.includes('EFECTIVO'))      return 'success';
+  if (t.includes('TARJETA'))       return 'primary';
+  if (t.includes('TRANSFERENCIA')) return 'info';
+  if (t.includes('MERCADO'))       return 'info';
+  if (t.includes('CHEQUE'))        return 'warning text-dark';
+  if (t.includes('CUENTA'))        return 'secondary';
+  return 'dark';
 }
 
 // ============================================================================

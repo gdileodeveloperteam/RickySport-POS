@@ -43,4 +43,18 @@ router.get('/:guid/saldo', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get('/:guid/movimientos', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.GetMovimientos(req.params.guid, req.query.desde, req.query.hasta);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:guid/facturas', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.GetFacturas(req.params.guid, req.query.desde, req.query.hasta);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

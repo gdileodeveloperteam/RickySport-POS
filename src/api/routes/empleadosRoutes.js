@@ -4,7 +4,20 @@ const repo = require('../../db/repositories/empleadosRepo');
 
 router.get('/', async (req, res, next) => {
   try {
-    const data = await repo.GetAll(req.query.search);
+    const { search, desde, hasta } = req.query;
+    if (desde || hasta) {
+      const data = await repo.GetAllConAdelantos(search, desde, hasta);
+      res.json(data);
+    } else {
+      const data = await repo.GetAll(search);
+      res.json(data);
+    }
+  } catch (err) { next(err); }
+});
+
+router.get('/:guid/adelantos', async (req, res, next) => {
+  try {
+    const data = await repo.GetAdelantos(req.params.guid, req.query.desde, req.query.hasta);
     res.json(data);
   } catch (err) { next(err); }
 });

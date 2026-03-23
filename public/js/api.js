@@ -57,6 +57,14 @@ const API = (function () {
   async function GetClienteSaldo(guid) {
     return Request(`/clientes/${guid}/saldo`);
   }
+  async function GetClienteMovimientos(guid, params = {}) {
+    const q = new URLSearchParams(params).toString();
+    return Request(`/clientes/${guid}/movimientos${q ? '?' + q : ''}`);
+  }
+  async function GetClienteFacturas(guid, params = {}) {
+    const q = new URLSearchParams(params).toString();
+    return Request(`/clientes/${guid}/facturas${q ? '?' + q : ''}`);
+  }
 
   async function GetClientesCtaCte(search) {
     const q = search ? `?search=${encodeURIComponent(search)}` : '';
@@ -105,6 +113,9 @@ const API = (function () {
 
   async function GetVentaDetalle(guid) {
     return Request(`/ventas/${guid}`);
+  }
+  async function GetFacturaDetalle(guid) {
+    return Request(`/ventas/factura/${guid}`);
   }
 
   async function GetResumenPagos(params) {
@@ -200,6 +211,10 @@ const API = (function () {
     const q = search ? `?search=${encodeURIComponent(search)}` : '';
     return Request(`/empleados${q}`);
   }
+  async function GetEmpleadoAdelantos(guid, params = {}) {
+    const q = new URLSearchParams(params).toString();
+    return Request(`/empleados/${guid}/adelantos${q ? '?' + q : ''}`);
+  }
 
   // Proveedores
   async function GetProveedores(search, guidConfiguracion) {
@@ -264,17 +279,27 @@ const API = (function () {
   async function UpdateConceptoPorBanco(guid, data) { return Request(`/conceptos-por-banco/${guid}`, { method: 'PUT', body: JSON.stringify(data) }); }
   async function DeleteConceptoPorBanco(guid) { return Request(`/conceptos-por-banco/${guid}`, { method: 'DELETE' }); }
 
+  // Caja Diaria
+  async function GetCajaDiaria(params = {}) {
+    const q = new URLSearchParams(params).toString();
+    return Request(`/caja-diaria${q ? '?' + q : ''}`);
+  }
+  async function GetCajaDiariaResumen(params = {}) {
+    const q = new URLSearchParams(params).toString();
+    return Request(`/caja-diaria/resumen${q ? '?' + q : ''}`);
+  }
+
   return {
     Login, GetUsuarios,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
-    GetClientes, CreateCliente, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte,
+    GetClientes, CreateCliente, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas,
     GetSucursales, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
     GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,
-    CreateVenta, GetVentas, GetVentaDetalle, GetResumenPagos, GetVentasPorSucursal, GetTotalesDevCambios,
+    CreateVenta, GetVentas, GetVentaDetalle, GetFacturaDetalle, GetResumenPagos, GetVentasPorSucursal, GetTotalesDevCambios,
     CreateDevolucion, GetDevolucionDetalle, GetCreditosCliente, CreateCambioConVenta,
     CreateTransferencia, GetTransferencias, GetTransferenciaDetalle,
-    GetEmpleados, GetProveedores,
+    GetEmpleados, GetEmpleadoAdelantos, GetProveedores,
     CreateGasto, CreateAdelanto, GetGastos,
     GetCondicionArticulos,
     CreateCompra, GetCompras, GetCompraDetalle,
@@ -283,5 +308,6 @@ const API = (function () {
     GetBancosCuentas, GetBancoCuentaByGuid, CreateBancoCuenta, UpdateBancoCuenta, DeleteBancoCuenta,
     GetConceptosPorBanco, GetConceptoPorBancoByGuid, CreateConceptoPorBanco, UpdateConceptoPorBanco, DeleteConceptoPorBanco,
     GetTiposCobrosPagos, GetTipoCobroPagoByGuid, CreateTipoCobroPago, UpdateTipoCobroPago, DeleteTipoCobroPago,
+    GetCajaDiaria, GetCajaDiariaResumen,
   };
 })();

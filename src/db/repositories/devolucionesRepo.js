@@ -6,7 +6,7 @@ const EMPTY_GUID = '';
 // ============================================================================
 // Devolución: reingresa mercadería y registra en RemitosDevoluciones
 // ============================================================================
-async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, items, motivo, tipoDevolucion, emitirNotaCredito }) {
+async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion, emitirNotaCredito }) {
   const pool = await getPool();
   const tx = pool.transaction();
   await tx.begin();
@@ -275,7 +275,7 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
 // ============================================================================
 async function CreateCambioConVenta({
   // Datos del cambio
-  guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, motivo, tipoCambio,
+  guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio,
   itemsCambio,
   // Datos de la nueva venta
   itemsVenta,
@@ -617,8 +617,8 @@ async function CreateCambioConVenta({
         await tx.request()
           .input('guid', sql.Char(16), guidPago)
           .input('fecha', sql.Date, new Date())
-          .input('tipoComprobante', sql.VarChar(30), pago.tipo)
-          .input('descripcion', sql.Char(60), `Cambio - ${pago.tipo}`)
+          .input('tipoComprobante', sql.VarChar(30), pago.descripcion || pago.tipo)
+          .input('descripcion', sql.Char(60), `Cambio - ${pago.descripcion || pago.tipo}`)
           .input('importe', sql.Decimal(13, 3), pago.importe)
           .input('importePagar', sql.Decimal(13, 2), pago.importe)
           .input('cuotas', sql.TinyInt, pago.cuotas || 1)
@@ -646,8 +646,8 @@ async function CreateCambioConVenta({
         await tx.request()
           .input('guid', sql.Char(16), guidCaja)
           .input('fecha', sql.Date, new Date())
-          .input('tipoComprobante', sql.VarChar(40), pago.tipo)
-          .input('descripcion', sql.Char(60), `Cambio - ${pago.tipo}`)
+          .input('tipoComprobante', sql.VarChar(40), pago.descripcion || pago.tipo)
+          .input('descripcion', sql.Char(60), `Cambio - ${pago.descripcion || pago.tipo}`)
           .input('debe', sql.Decimal(13, 2), pago.importe)
           .input('haber', sql.Decimal(13, 2), 0)
           .input('guidSucursal', sql.Char(16), guidSucursal)
@@ -658,16 +658,91 @@ async function CreateCambioConVenta({
           .input('guidCliente', sql.Char(16), guidCliente || EMPTY_GUID)
           .input('guidProveedor', sql.Char(16), EMPTY_GUID)
           .input('guidEmpleado', sql.Char(16), EMPTY_GUID)
+          .input('guidUsuario', sql.Char(16), guidUsuario || EMPTY_GUID)
           .input('ts', sql.Float, ts)
           .input('sts', sql.Float, ts)
           .query(`
             INSERT INTO CajaDiaria (GUID, FECHA, TIPOCOMPROBANTE, DESCRIPCION, DEBE, HABER,
               GUIDSUCURSALES, GUIDBANCOS, GUIDBANCOSCUENTAS, GUIDFORMAPAGOS, GUIDCAJAGASTOS,
-              GUIDCLIENTES, GUIDPROVEEDORES, GUIDEMPLEADOS, ts, sts)
+              GUIDCLIENTES, GUIDPROVEEDORES, GUIDEMPLEADOS, GUIDUSUARIOS, ts, sts)
             VALUES (@guid, @fecha, @tipoComprobante, @descripcion, @debe, @haber,
               @guidSucursal, @guidBanco, @guidBancosCuentas, @guidFormaPago, @guidCajaGastos,
-              @guidCliente, @guidProveedor, @guidEmpleado, @ts, @sts)
+              @guidCliente, @guidProveedor, @guidEmpleado, @guidUsuario, @ts, @sts)
           `);
+
+        // MovimientosCuentaBancos (todos excepto Cuenta Corriente)
+        if (!pago._esCtaCte) {
+          const guidMovBanco = newGuid();
+          await tx.request()
+            .input('guid', sql.Char(16), guidMovBanco)
+            .input('fecha', sql.Date, new Date())
+            .input('debitos', sql.Decimal(13, 2), pago.importe)
+            .input('creditos', sql.Decimal(13, 2), 0)
+            .input('importe', sql.Decimal(13, 2), pago.importe)
+            .input('guidConfig', sql.Char(16), EMPTY_GUID)
+            .input('guidBanco', sql.Char(16), pago.guidBanco || EMPTY_GUID)
+            .input('banco', sql.VarChar(100), '')
+            .input('guidConceptoBanco', sql.Char(16), EMPTY_GUID)
+            .input('concepto', sql.VarChar(100), '')
+            .input('guidTipoMovBanco', sql.Char(16), EMPTY_GUID)
+            .input('guidBancosCuentas', sql.Char(16), pago.guidBancosCuentas || EMPTY_GUID)
+            .input('saldo', sql.Decimal(13, 2), 0)
+            .input('descripcion', sql.VarChar(200), `Cambio - ${pago.descripcion || pago.tipo}`)
+            .query(`
+              INSERT INTO MovimientosCuentaBancos (GUID, ID, FECHA, DEBITOS, CREDITOS, IMPORTE,
+                GUIDCONFIGURACION, GUIDBANCOS, BANCO, GUIDCONCEPTOBANCO, CONCEPTO,
+                GuidTiposMovimientosCuentaBancos, GuidBancosCuentas, SALDO, DESCRIPCION)
+              VALUES (@guid, (SELECT ISNULL(MAX(ID), 0) + 1 FROM MovimientosCuentaBancos),
+                @fecha, @debitos, @creditos, @importe,
+                @guidConfig, @guidBanco, @banco, @guidConceptoBanco, @concepto,
+                @guidTipoMovBanco, @guidBancosCuentas, @saldo, @descripcion)
+            `);
+
+          // Vincular movimiento banco en FormaPagos
+          await tx.request()
+            .input('guidPago', sql.Char(16), guidPago)
+            .input('guidMovBanco', sql.Char(16), guidMovBanco)
+            .query(`UPDATE FormaPagos SET GUIDMOVIMIENTOBANCOS = @guidMovBanco WHERE GUID = @guidPago`);
+
+          // LibroCheques para Cheques de Terceros
+          if (pago._esCheque3ro) {
+            const guidCheque = newGuid();
+            await tx.request()
+              .input('guid', sql.Char(16), guidCheque)
+              .input('guidOrigenFondos', sql.Char(16), EMPTY_GUID)
+              .input('guidConfig', sql.Char(16), EMPTY_GUID)
+              .input('guidGastos', sql.Char(16), EMPTY_GUID)
+              .input('guidProveedor', sql.Char(16), EMPTY_GUID)
+              .input('guidBanco', sql.Char(16), pago.guidBanco || EMPTY_GUID)
+              .input('tipoCheque', sql.VarChar(20), 'TERCERO')
+              .input('fechaVencimiento', sql.Date, pago.chequeFechaVencimiento ? new Date(pago.chequeFechaVencimiento) : new Date())
+              .input('guidUsuarioCarga', sql.Char(16), EMPTY_GUID)
+              .input('numeroCheque', sql.Int, pago.chequeNumero || 0)
+              .input('guidFormaPago', sql.Char(16), guidPago)
+              .input('cuentaNumero', sql.Char(20), pago.chequeCuentaNumero || '')
+              .input('titular', sql.Char(60), pago.chequeTitular || '')
+              .input('cuitTitular', sql.Char(13), pago.chequeCuitTitular || '')
+              .input('tercero', sql.Char(60), pago.chequeBancoEmisor || '')
+              .input('importe', sql.Decimal(13, 2), pago.importe)
+              .input('estado', sql.Char(20), 'EN CARTERA')
+              .input('fechaEmision', sql.Date, new Date())
+              .input('guidOrdenesPago', sql.Char(16), EMPTY_GUID)
+              .input('guidRecibo', sql.Char(16), EMPTY_GUID)
+              .input('guidPagosRecibos', sql.Char(16), EMPTY_GUID)
+              .query(`
+                INSERT INTO LibroCheques (GUID, ID, GUIDORIGENFONDOSCHEQUES, GUIDCONFIGURACION,
+                  GUIDGASTOS, GUIDPROVEEDOR, GUIDBANCOS, TIPOCHEQUE, FECHAVENCIMIENTO,
+                  GUIDUSUARIOCARGA, NUMEROCHEQUE, GUIDFORMAPAGO, CUENTANUMERO, TITULAR,
+                  CUITTITULAR, TERCERO, IMPORTE, ESTADO, FECHAEMISION,
+                  GUIDORDENESDEPAGO, GUIDRECIBO, GUIDPAGOSRECIBOS)
+                VALUES (@guid, (SELECT ISNULL(MAX(ID), 0) + 1 FROM LibroCheques), @guidOrigenFondos, @guidConfig,
+                  @guidGastos, @guidProveedor, @guidBanco, @tipoCheque, @fechaVencimiento,
+                  @guidUsuarioCarga, @numeroCheque, @guidFormaPago, @cuentaNumero, @titular,
+                  @cuitTitular, @tercero, @importe, @estado, @fechaEmision,
+                  @guidOrdenesPago, @guidRecibo, @guidPagosRecibos)
+              `);
+          }
+        }
 
         // Si pago es CTA_CTE, actualizar saldo cliente
         if (pago._esCtaCte && guidCliente && guidCliente !== EMPTY_GUID) {

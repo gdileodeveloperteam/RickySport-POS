@@ -1,5 +1,5 @@
 const { getPool, sql } = require('../pool');
-const { newGuid, tsNow } = require('../../utils/guidHelper');
+const { newGuid, tsNow, dateToClarion } = require('../../utils/guidHelper');
 
 async function Create({ nombre, documento, cuit, direccion, email, celular, tipoIva, tipoFactura, codigoDocumentoAfip }) {
   const pool = await getPool();
@@ -122,4 +122,39 @@ async function UpdateSaldo(guid, nuevoSaldo) {
     .query(`UPDATE Clientes SET SALDO = @saldo WHERE GUID = @guid`);
 }
 
-module.exports = { Create, GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo };
+async function GetMovimientos(guidCliente, desde, hasta) {
+  const pool = await getPool();
+  const request = pool.request();
+  request.input('guidCliente', sql.Char(16), guidCliente);
+  let where = 'mc.GUIDCLIENTES = @guidCliente AND (mc.dts IS NULL OR mc.dts = 0)';
+  if (desde) { request.input('desde', sql.Decimal(7), dateToClarion(desde)); where += ' AND mc.FECHA >= @desde'; }
+  if (hasta) { request.input('hasta', sql.Decimal(7), dateToClarion(hasta)); where += ' AND mc.FECHA <= @hasta'; }
+  const result = await request.query(`
+    SELECT mc.GUID, mc.FECHA, mc.DESCRIPCION, mc.DEBE, mc.HABER, mc.SALDO,
+           mc.GUIDREMITOS, mc.GUIDREMITOSDEVOLUCIONES, mc.GUIDREMITOSCAMBIOS
+    FROM MovimientoClientes mc
+    WHERE ${where}
+    ORDER BY mc.FECHA DESC, mc.ts DESC
+  `);
+  return result.recordset;
+}
+
+async function GetFacturas(guidCliente, desde, hasta) {
+  const pool = await getPool();
+  const request = pool.request();
+  request.input('guidCliente', sql.Char(16), guidCliente);
+  let where = 'f.GUIDCLIENTES = @guidCliente AND (f.dts IS NULL OR f.dts = 0)';
+  if (desde) { request.input('desde', sql.Decimal(7), dateToClarion(desde)); where += ' AND f.FECHA >= @desde'; }
+  if (hasta) { request.input('hasta', sql.Decimal(7), dateToClarion(hasta)); where += ' AND f.FECHA <= @hasta'; }
+  const result = await request.query(`
+    SELECT f.GUID, f.NUMERO_FACTURA, f.TIPO_COMPROBANTE, f.TIPO_FACTURA,
+           f.FECHA, f.TOTAL, f.NOMBRE, f.CUIT, f.CAE, f.PENDIENTE,
+           f.GUIDREMITOS
+    FROM Facturas f
+    WHERE ${where}
+    ORDER BY f.FECHA DESC, f.ts DESC
+  `);
+  return result.recordset;
+}
+
+module.exports = { Create, GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo, GetMovimientos, GetFacturas };

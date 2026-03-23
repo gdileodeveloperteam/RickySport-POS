@@ -5,11 +5,11 @@ const devolucionesRepo = require('../../db/repositories/devolucionesRepo');
 // Devolucion (reingresa mercaderia, registra en RemitosDevoluciones)
 router.post('/', async (req, res, next) => {
   try {
-    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, items, motivo, tipoDevolucion, emitirNotaCredito } = req.body;
+    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion, emitirNotaCredito } = req.body;
     if (!motivo || !motivo.trim()) {
       return res.status(400).json({ error: 'El motivo de devolucion es obligatorio' });
     }
-    const data = await devolucionesRepo.CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, items, motivo, tipoDevolucion, emitirNotaCredito });
+    const data = await devolucionesRepo.CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion, emitirNotaCredito });
     res.status(201).json(data);
   } catch (err) { next(err); }
 });
@@ -17,7 +17,7 @@ router.post('/', async (req, res, next) => {
 // Cambio con venta (atomico: graba cambio + venta nueva + cobro automatico)
 router.post('/cambio', async (req, res, next) => {
   try {
-    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, motivo, tipoCambio, itemsCambio, itemsVenta, pagos } = req.body;
+    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio, itemsCambio, itemsVenta, pagos } = req.body;
     if (!motivo || !motivo.trim()) {
       return res.status(400).json({ error: 'El motivo del cambio es obligatorio' });
     }
@@ -25,7 +25,7 @@ router.post('/cambio', async (req, res, next) => {
       return res.status(400).json({ error: 'Debe cargar articulos para la nueva venta' });
     }
     const data = await devolucionesRepo.CreateCambioConVenta({
-      guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, nombre, motivo, tipoCambio,
+      guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio,
       itemsCambio, itemsVenta, pagos,
     });
     res.status(201).json(data);
