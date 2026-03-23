@@ -176,6 +176,22 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
     if (emitirNotaCredito) {
       const guidNotaCredito = newGuid();
 
+      // Obtener TIPO_IVA y DIRECCION del cliente para la NC
+      let tipoIvaCliente = '';
+      let direccionCliente = '';
+      let cuitCliente = '';
+      if (guidCliente && guidCliente !== EMPTY_GUID) {
+        const cliResult = await tx.request()
+          .input('guidCli', sql.Char(16), guidCliente)
+          .query(`SELECT TIPO_IVA, DIRECCION, CUIT FROM Clientes WHERE GUID = @guidCli`);
+        const cli = cliResult.recordset[0];
+        if (cli) {
+          tipoIvaCliente = (cli.TIPO_IVA || '').trim();
+          direccionCliente = (cli.DIRECCION || '').trim();
+          cuitCliente = (cli.CUIT || '').trim();
+        }
+      }
+
       const sucResult = await tx.request()
         .input('guidSuc', sql.Char(16), guidSucursal)
         .query(`SELECT PUNTOVENTA, ULTIMANOTACREDITOB, GUIDCONFIGURACION, IDCOMPROBANTENCDB FROM Sucursales WHERE GUID = @guidSuc`);
@@ -203,11 +219,17 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
         .input('numFactura', sql.Char(13), numNCStr)
         .input('puntoVenta', sql.Int, puntoVenta)
         .input('numero', sql.Int, numeroNC)
+        .input('numeroHasta', sql.Int, numeroNC)
         .input('tipoComp', sql.Char(3), 'NCB')
         .input('tipoFactura', sql.Char(1), 'B')
+        .input('tipoIva', sql.NVarChar, tipoIvaCliente || null)
         .input('fecha', sql.Decimal(7), dateToClarion())
+        .input('fechaVencimiento', sql.Date, new Date())
+        .input('fechaServDesde', sql.Date, new Date())
+        .input('fechaServHasta', sql.Date, new Date())
         .input('nombre', sql.Char(100), nombre || 'CONSUMIDOR FINAL')
-        .input('cuit', sql.Char(13), '')
+        .input('direccion', sql.NVarChar, direccionCliente || null)
+        .input('cuit', sql.Char(13), cuitCliente)
         .input('total', sql.Decimal(15, 2), totalDevolucion)
         .input('neto', sql.Decimal(15, 2), totalDevolucion)
         .input('pendiente', sql.TinyInt, 0)
@@ -215,14 +237,16 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
           INSERT INTO Facturas (GUID, GUIDCLIENTES, GUIDCONFIGURACION, ts, sts,
             CODIGO_CONFIGURACION, CODIGO_IMPUTACION, CODIGO_VENDEDOR,
             CODIGO_DOCUMENTO_AFIP, CODIGO_CONCEPTO_AFIP, IDCOMP,
-            NUMERO_FACTURA, PUNTOVENTA, NUMERO,
-            TIPO_COMPROBANTE, TIPO_FACTURA, FECHA, NOMBRE, CUIT,
+            NUMERO_FACTURA, PUNTOVENTA, NUMERO, NUMEROHASTA,
+            TIPO_COMPROBANTE, TIPO_FACTURA, TIPO_IVA, FECHA, FECHA_VENCIMIENTO,
+            FECHASERVDESDE, FECHASERVHASTA, NOMBRE, DIRECCION, CUIT,
             TOTAL, TOTAL_NETO21, PENDIENTE)
           VALUES (@guid, @guidCliente, @guidConfig, @ts, @sts,
             @codConfig, @codImputacion, @codVendedor,
             @codDocAfip, @codConceptoAfip, @idComp,
-            @numFactura, @puntoVenta, @numero,
-            @tipoComp, @tipoFactura, @fecha, @nombre, @cuit,
+            @numFactura, @puntoVenta, @numero, @numeroHasta,
+            @tipoComp, @tipoFactura, @tipoIva, @fecha, @fechaVencimiento,
+            @fechaServDesde, @fechaServHasta, @nombre, @direccion, @cuit,
             @total, @neto, @pendiente)
         `);
 

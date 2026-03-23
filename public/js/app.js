@@ -431,6 +431,7 @@ const POS = {
       return;
     }
     POS.pagos = [];
+    POS._resetTipoPago = true;
     RenderPagosModal();
     new bootstrap.Modal(document.getElementById('modalPagos')).show();
   },
@@ -1116,7 +1117,8 @@ function RenderPagosModal() {
 
   // ── 1. Poblar TiposCobrosPagos (TIPOMOVIMIENTO != 'E') ──
   const sel = document.getElementById('pagoTipo');
-  const prevTipo = sel.value;
+  const prevTipo = POS._resetTipoPago ? '' : sel.value;
+  POS._resetTipoPago = false;
   sel.innerHTML = '';
   State.tiposCobrosPagos
     .filter(t => (t.TIPOMOVIMIENTO || '').trim() !== 'E')

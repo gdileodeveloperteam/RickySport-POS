@@ -343,14 +343,20 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
     if (emitirFactura) {
       guidFactura = newGuid();
 
-      // Determinar tipo de factura del cliente (A o B)
+      // Determinar tipo de factura, IVA y dirección del cliente
       let tipoFactura = 'B';
+      let tipoIvaCliente = '';
+      let direccionCliente = '';
       if (guidCliente && guidCliente !== EMPTY_GUID) {
         const cliResult = await tx.request()
           .input('guidCli', sql.Char(16), guidCliente)
-          .query(`SELECT TIPO_FACTURA FROM Clientes WHERE GUID = @guidCli`);
+          .query(`SELECT TIPO_FACTURA, TIPO_IVA, DIRECCION FROM Clientes WHERE GUID = @guidCli`);
         const cli = cliResult.recordset[0];
-        if (cli && cli.TIPO_FACTURA) tipoFactura = (cli.TIPO_FACTURA || 'B').trim().toUpperCase();
+        if (cli) {
+          if (cli.TIPO_FACTURA) tipoFactura = (cli.TIPO_FACTURA || 'B').trim().toUpperCase();
+          tipoIvaCliente = (cli.TIPO_IVA || '').trim();
+          direccionCliente = (cli.DIRECCION || '').trim();
+        }
       }
 
       const esFacturaA = tipoFactura === 'A';
@@ -412,20 +418,28 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .input('pendiente', sql.TinyInt, 0)
         .input('dateAdded', sql.Int, dateToInt())
         .input('timeAdded', sql.Int, timeToInt())
+        .input('numeroHasta', sql.Int, numeroFactura)
+        .input('tipoIva', sql.NVarChar, tipoIvaCliente || null)
+        .input('fechaVencimiento', sql.Date, new Date())
+        .input('fechaServDesde', sql.Date, new Date())
+        .input('fechaServHasta', sql.Date, new Date())
+        .input('direccion', sql.NVarChar, direccionCliente || null)
         .query(`
           INSERT INTO Facturas (GUID, GUIDCLIENTES, GUIDREMITOS, GUIDCONFIGURACION, ts, sts,
             CODIGO_CONFIGURACION, CODIGO_IMPUTACION, CODIGO_VENDEDOR, VENDEDOR_NOMBRE,
             CODIGO_DOCUMENTO_AFIP, CODIGO_CONCEPTO_AFIP, IDCOMP,
-            NUMERO_FACTURA, PUNTOVENTA, NUMERO,
-            TIPO_COMPROBANTE, TIPO_FACTURA, FECHA, NOMBRE, CUIT,
+            NUMERO_FACTURA, PUNTOVENTA, NUMERO, NUMEROHASTA,
+            TIPO_COMPROBANTE, TIPO_FACTURA, TIPO_IVA, FECHA, FECHA_VENCIMIENTO,
+            FECHASERVDESDE, FECHASERVHASTA, NOMBRE, DIRECCION, CUIT,
             TOTAL, TOTAL_NETO21, TOTAL_IVA21, TOTAL_NETO0, TOTAL_IVA0,
             TOTAL_EXENTO, TOTAL_NOGRAVADO, PENDIENTE,
             DATEADDED, TIMEADDED)
           VALUES (@guid, @guidCliente, @guidRemito, @guidConfig, @ts, @sts,
             @codConfig, @codImputacion, @codVendedor, @vendedorNombre,
             @codDocAfip, @codConceptoAfip, @idComp,
-            @numFactura, @puntoVenta, @numero,
-            @tipoComp, @tipoFactura, @fecha, @nombre, @cuit,
+            @numFactura, @puntoVenta, @numero, @numeroHasta,
+            @tipoComp, @tipoFactura, @tipoIva, @fecha, @fechaVencimiento,
+            @fechaServDesde, @fechaServHasta, @nombre, @direccion, @cuit,
             @total, @neto21, @iva21, @neto0, @iva0,
             @exento, @noGravado, @pendiente,
             @dateAdded, @timeAdded)
