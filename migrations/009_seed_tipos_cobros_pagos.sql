@@ -15,7 +15,7 @@ USING (VALUES
     ('TCP_CHQ_PRO_06', 6,  'CHEQUE PROPIO',          'E'),
     ('TCP_CHQ_3RO_07', 7,  'CHEQUES 3ROS',           'I'),
     ('TCP_DEP_BAN_08', 8,  'DEPOSITO BANCARIO',      'I'),
-    ('TCP_CREDITO_09',  9,  'CREDITO',                'I'),
+    ('TCP_CREDITO_09',  9,  'CREDITO DEVOLUCION',     'I'),
     ('TCP_CTA_CTE_10', 10, 'CUENTA CORRIENTE',       'X')
 ) AS src (GUID, TIPO, DESCRIPCION, TIPOMOVIMIENTO)
 ON tgt.TIPO = src.TIPO

@@ -1,5 +1,5 @@
 const { getPool, sql } = require('../pool');
-const { newGuid, tsNow, dateToInt, timeToInt, dateToClarion } = require('../../utils/guidHelper');
+const { newGuid, tsNow, dateToInt, timeToInt, dateToClarion, todayAR } = require('../../utils/guidHelper');
 
 const EMPTY_GUID = '';
 
@@ -106,7 +106,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .input('egreso', sql.Float, item.cantidad)
         .input('ingreso', sql.Float, 0)
         .input('estado', sql.VarChar(20), 'NUEVO')
-        .input('fecha', sql.Date, new Date())
+        .input('fecha', sql.Date, todayAR())
         .input('tipo', sql.VarChar(20), 'VENTA')
         .input('ts', sql.Float, ts)
         .input('sts', sql.Float, ts)
@@ -130,7 +130,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
       // FormaPagos
       await tx.request()
         .input('guid', sql.Char(16), guidPago)
-        .input('fecha', sql.Date, new Date())
+        .input('fecha', sql.Date, todayAR())
         .input('tipoComprobante', sql.VarChar(30), pago.descripcion || pago.tipo)
         .input('descripcion', sql.Char(60), pago.descripcion || pago.tipo)
         .input('importe', sql.Decimal(13, 3), pago.importe)
@@ -160,7 +160,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
       // CajaDiaria
       await tx.request()
         .input('guid', sql.Char(16), guidCaja)
-        .input('fecha', sql.Date, new Date())
+        .input('fecha', sql.Date, todayAR())
         .input('tipoComprobante', sql.VarChar(40), pago.descripcion || pago.tipo)
         .input('descripcion', sql.Char(60), `Venta - ${pago.descripcion || pago.tipo}`)
         .input('debe', sql.Decimal(13, 2), pago.importe)
@@ -190,7 +190,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         const guidMovBanco = newGuid();
         await tx.request()
           .input('guid', sql.Char(16), guidMovBanco)
-          .input('fecha', sql.Date, new Date())
+          .input('fecha', sql.Date, todayAR())
           .input('debitos', sql.Decimal(13, 2), pago.importe)
           .input('creditos', sql.Decimal(13, 2), 0)
           .input('importe', sql.Decimal(13, 2), pago.importe)
@@ -240,7 +240,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
             .input('tercero', sql.Char(60), pago.chequeBancoEmisor || '')
             .input('importe', sql.Decimal(13, 2), pago.importe)
             .input('estado', sql.Char(20), 'EN CARTERA')
-            .input('fechaEmision', sql.Date, new Date())
+            .input('fechaEmision', sql.Date, todayAR())
             .input('guidOrdenesPago', sql.Char(16), EMPTY_GUID)
             .input('guidRecibo', sql.Char(16), EMPTY_GUID)
             .input('guidPagosRecibos', sql.Char(16), EMPTY_GUID)
@@ -260,7 +260,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
       }
 
       // Si pago es Credito Devolucion, consumir credito
-      if (pago.tipo === 'CREDITO_DEV' && pago.guidCreditoDevolucion) {
+      if (pago.guidCreditoDevolucion) {
         const guidUso = newGuid();
         await tx.request()
           .input('guid', sql.Char(16), guidUso)
@@ -268,7 +268,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
           .input('guidRemito', sql.Char(16), guidRemito)
           .input('guidFormaPago', sql.Char(16), guidPago)
           .input('monto', sql.Decimal(13, 3), pago.importe)
-          .input('fecha', sql.Date, new Date())
+          .input('fecha', sql.Date, todayAR())
           .input('ts', sql.Float, ts)
           .input('sts', sql.Float, ts)
           .query(`
@@ -286,6 +286,35 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
                 ESTADO = CASE WHEN (MONTOUSADO + @monto) >= MONTOORIGINAL THEN 'CONSUMIDO' ELSE 'ACTIVO' END
             WHERE GUID = @guidCredito
           `);
+
+        // Marcar movimientos HABER de la devolución como cobrados en MovimientoClientes
+        // para que no aparezcan en Deuda Activa
+        const creditoInfo = await tx.request()
+          .input('guidCredito', sql.Char(16), pago.guidCreditoDevolucion)
+          .query(`SELECT GUIDREMITOSDEVOLUCIONES FROM CreditosDevoluciones WHERE GUID = @guidCredito`);
+        const guidRemDev = creditoInfo.recordset[0]?.GUIDREMITOSDEVOLUCIONES;
+        if (guidRemDev && guidRemDev.trim()) {
+          await tx.request()
+            .input('guidRemDev', sql.Char(16), guidRemDev)
+            .input('guidFP', sql.Char(16), guidPago)
+            .query(`
+              UPDATE MovimientoClientes
+              SET GUIDFORMAPAGOS = @guidFP
+              WHERE GUIDREMITOSDEVOLUCIONES = @guidRemDev
+                AND HABER > 0
+                AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL)
+                AND (dts IS NULL OR dts = 0)
+            `);
+        }
+
+        // Ajustar saldo del cliente: la devolución redujo el saldo (crédito a favor),
+        // al consumir ese crédito el saldo debe subir de vuelta
+        if (guidCliente && guidCliente !== EMPTY_GUID) {
+          await tx.request()
+            .input('guid', sql.Char(16), guidCliente)
+            .input('importe', sql.Decimal(13, 3), pago.importe)
+            .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) + @importe WHERE GUID = @guid`);
+        }
       }
 
       // Si pago es Cuenta Corriente, actualizar saldo cliente
@@ -420,9 +449,9 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .input('timeAdded', sql.Int, timeToInt())
         .input('numeroHasta', sql.Int, numeroFactura)
         .input('tipoIva', sql.NVarChar, tipoIvaCliente || null)
-        .input('fechaVencimiento', sql.Date, new Date())
-        .input('fechaServDesde', sql.Date, new Date())
-        .input('fechaServHasta', sql.Date, new Date())
+        .input('fechaVencimiento', sql.Date, todayAR())
+        .input('fechaServDesde', sql.Date, todayAR())
+        .input('fechaServHasta', sql.Date, todayAR())
         .input('direccion', sql.NVarChar, direccionCliente || null)
         .query(`
           INSERT INTO Facturas (GUID, GUIDCLIENTES, GUIDREMITOS, GUIDCONFIGURACION, ts, sts,

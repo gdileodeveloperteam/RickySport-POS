@@ -1,5 +1,5 @@
 const { getPool, sql } = require('../pool');
-const { newGuid, tsNow, dateToClarion } = require('../../utils/guidHelper');
+const { newGuid, tsNow, dateToClarion, todayAR } = require('../../utils/guidHelper');
 
 const EMPTY_GUID = '';
 
@@ -32,7 +32,7 @@ async function CreateTransferencia({ guidSucursalOrigen, guidSucursalDestino, it
         .input('egreso', sql.Float, item.cantidad)
         .input('ingreso', sql.Float, 0)
         .input('estado', sql.VarChar(20), 'CONFIRMADO')
-        .input('fecha', sql.Date, new Date())
+        .input('fecha', sql.Date, todayAR())
         .input('tipo', sql.VarChar(20), 'TRANSFERENCIA')
         .input('ts', sql.Float, ts)
         .input('sts', sql.Float, ts)
@@ -66,7 +66,7 @@ async function CreateTransferencia({ guidSucursalOrigen, guidSucursalDestino, it
         .input('egreso', sql.Float, 0)
         .input('ingreso', sql.Float, item.cantidad)
         .input('estado', sql.VarChar(20), 'CONFIRMADO')
-        .input('fecha', sql.Date, new Date())
+        .input('fecha', sql.Date, todayAR())
         .input('tipo', sql.VarChar(20), 'TRANSFERENCIA')
         .input('ts', sql.Float, ts)
         .input('sts', sql.Float, ts)

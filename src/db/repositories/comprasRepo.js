@@ -1,5 +1,5 @@
 const { getPool, sql } = require('../pool');
-const { newGuid, tsNow, dateToClarion, dateToInt, timeToInt } = require('../../utils/guidHelper');
+const { newGuid, tsNow, dateToClarion, dateToInt, timeToInt, todayAR } = require('../../utils/guidHelper');
 
 const EMPTY_GUID = '';
 
@@ -30,7 +30,7 @@ async function CreateCompra({ guidProveedor, nombreProveedor, guidSucursal, item
       .input('nombre', sql.VarChar(255), nombreProveedor || '')
       .input('total', sql.Decimal(13, 3), totalCompra)
       .input('fecha', sql.Int, fecha)
-      .input('fechaCarga', sql.Date, new Date())
+      .input('fechaCarga', sql.Date, todayAR())
       .input('observaciones', sql.VarChar(1998), observaciones || '')
       .input('ts', sql.Float, ts)
       .input('sts', sql.Float, ts)
@@ -105,7 +105,7 @@ async function CreateCompra({ guidProveedor, nombreProveedor, guidSucursal, item
         .input('ingreso', sql.Float, item.cantidad)
         .input('egreso', sql.Float, 0)
         .input('estado', sql.VarChar(20), item.estado || 'NUEVO')
-        .input('fecha', sql.Date, new Date())
+        .input('fecha', sql.Date, todayAR())
         .input('tipo', sql.VarChar(20), 'COMPRA')
         .input('ts', sql.Float, ts)
         .input('sts', sql.Float, ts)

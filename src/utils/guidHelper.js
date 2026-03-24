@@ -18,7 +18,7 @@ function dateToInt(d) {
     const parts = d.slice(0, 10).split('-');
     return parseInt(parts.join(''), 10);
   }
-  const dt = d ? new Date(d) : new Date();
+  const dt = d ? new Date(d) : nowAR();
   const y = dt.getFullYear();
   const m = String(dt.getMonth() + 1).padStart(2, '0');
   const day = String(dt.getDate()).padStart(2, '0');
@@ -26,7 +26,7 @@ function dateToInt(d) {
 }
 
 function timeToInt() {
-  const dt = new Date();
+  const dt = nowAR();
   const h = String(dt.getHours()).padStart(2, '0');
   const min = String(dt.getMinutes()).padStart(2, '0');
   const s = String(dt.getSeconds()).padStart(2, '0');
@@ -42,10 +42,23 @@ function dateToClarion(d) {
     const [y, m, day] = d.slice(0, 10).split('-').map(Number);
     dt = new Date(y, m - 1, day);
   } else {
-    dt = d ? new Date(d) : new Date();
+    dt = d ? new Date(d) : nowAR();
   }
   dt.setHours(0, 0, 0, 0);
   return Math.floor((dt.getTime() - CLARION_BASE) / MS_PER_DAY);
 }
 
-module.exports = { newGuid, lookupGuid, tsNow, dateToInt, timeToInt, dateToClarion };
+// Devuelve un Date ajustado a hora Argentina (UTC-3)
+function nowAR() {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc - 3 * 3600000);
+}
+
+// Devuelve solo la fecha (sin hora) en Argentina como Date
+function todayAR() {
+  const ar = nowAR();
+  return new Date(ar.getFullYear(), ar.getMonth(), ar.getDate());
+}
+
+module.exports = { newGuid, lookupGuid, tsNow, dateToInt, timeToInt, dateToClarion, nowAR, todayAR };

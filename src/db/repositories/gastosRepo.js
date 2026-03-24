@@ -1,5 +1,5 @@
 const { getPool, sql } = require('../pool');
-const { newGuid, tsNow, dateToClarion } = require('../../utils/guidHelper');
+const { newGuid, tsNow, dateToClarion, todayAR } = require('../../utils/guidHelper');
 
 const EMPTY_GUID = '';
 
@@ -49,7 +49,7 @@ async function CreateGasto({ guidSucursal, rubro, descripcion, importe, medioPag
     // 2. CajaDiaria
     await tx.request()
       .input('guid', sql.Char(16), guidCaja)
-      .input('fecha', sql.Date, new Date())
+      .input('fecha', sql.Date, todayAR())
       .input('tipoComprobante', sql.VarChar(40), medioPago || 'EFECTIVO')
       .input('descripcion', sql.Char(60), `Gasto - ${rubro} - ${descripcion}`.substring(0, 60))
       .input('debe', sql.Decimal(13, 2), 0)
@@ -102,7 +102,7 @@ async function CreateAdelanto({ guidSucursal, guidEmpleado, importe, observacion
       .input('guidEmpleado', sql.Char(16), guidEmpleado)
       .input('guidSucursal', sql.Char(16), guidSucursal)
       .input('guidCajaGastos', sql.Char(16), guidGasto)
-      .input('fecha', sql.Date, new Date())
+      .input('fecha', sql.Date, todayAR())
       .input('debe', sql.Decimal(13, 3), importe)
       .input('haber', sql.Decimal(13, 3), 0)
       .input('saldo', sql.Decimal(13, 3), importe)
@@ -151,7 +151,7 @@ async function CreateAdelanto({ guidSucursal, guidEmpleado, importe, observacion
     // 3. CajaDiaria
     await tx.request()
       .input('guid', sql.Char(16), guidCaja)
-      .input('fecha', sql.Date, new Date())
+      .input('fecha', sql.Date, todayAR())
       .input('tipoComprobante', sql.VarChar(40), medioPago || 'EFECTIVO')
       .input('descripcion', sql.Char(60), `Adelanto - ${observaciones || 'Retiro de efectivo'}`.substring(0, 60))
       .input('debe', sql.Decimal(13, 2), 0)
@@ -186,7 +186,7 @@ async function CreateAdelanto({ guidSucursal, guidEmpleado, importe, observacion
       .input('guidProveedores', sql.Char(16), EMPTY_GUID)
       .input('guidOrdenesDePago', sql.Char(16), EMPTY_GUID)
       .input('tipoRecibo', sql.Char(20), 'ADELANTO DE SUELDOS')
-      .input('fechaCreacion', sql.Date, new Date())
+      .input('fechaCreacion', sql.Date, todayAR())
       .input('importeComprobante', sql.Decimal(13, 2), importe)
       .input('descuentoComprobante', sql.Decimal(13, 2), 0)
       .input('subtotalComprobante', sql.Decimal(13, 2), importe)

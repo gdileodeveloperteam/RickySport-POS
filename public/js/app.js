@@ -175,6 +175,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') { e.preventDefault(); App.Login(); }
   });
   document.getElementById('loginUsuario').focus();
+
+  // Limpiar modo cobro deuda al cerrar modal de pagos
+  document.getElementById('modalPagos').addEventListener('hidden.bs.modal', () => {
+    if (POS._modoCobroDeuda) {
+      POS._modoCobroDeuda = false;
+      POS._cobroDeudaData = null;
+      POS.pagos = [];
+      POS._totalConRecargo = 0;
+    }
+  });
 });
 
 async function InitApp() {
@@ -323,6 +333,8 @@ const POS = {
     POS.vendedor = null;
     POS._totalConRecargo = 0;
     POS.emitirFactura = false;
+    POS._modoCobroDeuda = false;
+    POS._cobroDeudaData = null;
   },
 
   GetTotal() {
@@ -335,6 +347,19 @@ const POS = {
 
   async BuscarArticulo(texto) {
     if (!texto) return;
+
+    // Detectar QR de comprobante de devolución: {"g":"...","f":"...","m":...}
+    if (texto.startsWith('{') && texto.includes('"g"')) {
+      try {
+        const qr = JSON.parse(texto);
+        if (qr.g) {
+          document.getElementById('posSearch').value = '';
+          await AplicarCreditoDesdeQR(qr.g);
+          return;
+        }
+      } catch (_) {} // No es JSON válido, continuar con búsqueda normal
+    }
+
     try {
       // 1. Intentar match exacto por CODIGOARTICULOREL
       let art = null;
@@ -443,6 +468,8 @@ const POS = {
   },
 
   RequiereFactura() {
+    // No requerir factura si cobro deuda y todos los comprobantes ya tienen factura fiscal
+    if (POS._modoCobroDeuda && POS._cobroDeudaData && POS._cobroDeudaData.todosConFactura) return false;
     return POS.pagos.some(p => !p._esEfectivo && !p._esCtaCte && !p._esCreditoDev);
   },
 
@@ -465,6 +492,20 @@ const POS = {
     const divCheque = document.getElementById('cheque3rosFields');
     if (divCheque) { esCheque3ro ? divCheque.classList.remove('d-none') : divCheque.classList.add('d-none'); }
 
+    // Tarjeta Debito (2) / Credito (3): mostrar/ocultar campos
+    const esTarjeta = tipoNum === 2 || tipoNum === 3;
+    const divTarjeta = document.getElementById('tarjetaFields');
+    if (divTarjeta) {
+      if (esTarjeta) {
+        divTarjeta.classList.remove('d-none');
+        // Auto-completar titular con nombre del cliente
+        const chk = document.getElementById('tarjetaMismoTitular');
+        if (chk) { chk.checked = true; ToggleTitularTarjeta(); }
+      } else {
+        divTarjeta.classList.add('d-none');
+      }
+    }
+
     // Cuenta bancaria: mostrar para Transferencia (4) y Deposito Bancario (8)
     const requiereCuentaBancaria = tipoNum === 4 || tipoNum === 8;
     const divCuentaBancaria = document.getElementById('divCuentaBancaria');
@@ -480,7 +521,8 @@ const POS = {
           + cuentasBanco.map(c => {
             const nombre = (c.NUMEROCUENTA || c.ALIAS || '').trim();
             const tipo = (c.TIPOCUENTA || '').trim();
-            return `<option value="${c.GUID.trim()}" data-guidbancos="${(c.GUIDBANCOS || '').trim()}">${nombre} (${tipo})</option>`;
+            const banco = (c.NombreBanco || '').trim();
+            return `<option value="${c.GUID.trim()}" data-guidbancos="${(c.GUIDBANCOS || '').trim()}">${banco ? banco + ' - ' : ''}${nombre} (${tipo})</option>`;
           }).join('');
       } else {
         divCuentaBancaria.classList.add('d-none');
@@ -509,7 +551,7 @@ const POS = {
     const tipoDescrip = (tipoSel.DESCRIPCION || '').trim();
     const esEfectivo = tipoDescrip.toUpperCase() === 'EFECTIVO';
     const esCtaCte = tipoMov === 'X';
-    const esCreditoDev = tipoDescrip.toUpperCase().indexOf('CREDITO') >= 0 && tipoDescrip.toUpperCase().indexOf('DEV') >= 0;
+    const esCreditoDev = tipoSel ? tipoSel.TIPO === 9 : false;
     const esCheque3ro = tipoDescrip.toUpperCase().indexOf('CHEQUE') >= 0 && tipoDescrip.toUpperCase().indexOf('3') >= 0;
 
     const compSel = GetComprobanteSel();
@@ -570,10 +612,23 @@ const POS = {
       if (!chqFecha) { ShowToast('Aviso', 'Ingrese la fecha de vencimiento del cheque', 'info'); return; }
     }
 
+    // Validación tarjeta debito/credito
+    const esTarjeta = tipoSel.TIPO === 2 || tipoSel.TIPO === 3;
+    if (esTarjeta) {
+      const titular = (document.getElementById('tarjetaNombreTitular').value || '').trim();
+      const tarjNum = (document.getElementById('tarjetaNumero').value || '').trim();
+      const lote = (document.getElementById('tarjetaLote').value || '').trim();
+      const cupon = (document.getElementById('tarjetaCuponNumero').value || '').trim();
+      if (!titular) { ShowToast('Aviso', 'Ingrese el nombre del titular de la tarjeta', 'info'); return; }
+      if (!tarjNum) { ShowToast('Aviso', 'Ingrese el número de tarjeta', 'info'); return; }
+      if (!lote) { ShowToast('Aviso', 'Ingrese el lote', 'info'); return; }
+      if (!cupon) { ShowToast('Aviso', 'Ingrese el número de cupón', 'info'); return; }
+    }
+
     let descripcion = tipoDescrip;
     if (compSel) descripcion = (compSel.TIPO_COMPROBANTE || '').trim();
 
-    const pago = { tipo: tipoSel.GUID.trim(), importe, descripcion, guidBanco: '', guidBancosCuentas: '', _esEfectivo: esEfectivo, _esCtaCte: esCtaCte, _esCreditoDev: esCreditoDev, _esCheque3ro: esCheque3ro };
+    const pago = { tipo: tipoSel.GUID.trim(), tipoNombre: tipoDescrip, importe, descripcion, guidBanco: '', guidBancosCuentas: '', _esEfectivo: esEfectivo, _esCtaCte: esCtaCte, _esCreditoDev: esCreditoDev, _esCheque3ro: esCheque3ro, _esTarjeta: esTarjeta };
 
     if (compSel) {
       pago.guidComprobante = compSel.GUID.trim();
@@ -621,13 +676,25 @@ const POS = {
       pago.chequeBancoEmisor = (document.getElementById('chequeBancoEmisor').value || '').trim();
       pago.chequeCuentaNumero = (document.getElementById('chequeCuentaNumero').value || '').trim();
       pago.chequeFechaVencimiento = (document.getElementById('chequeFechaVencimiento').value || '').trim();
-      // Limpiar campos cheque después de agregar
       document.getElementById('chequeNumero').value = '';
       document.getElementById('chequeTitular').value = '';
       document.getElementById('chequeCuitTitular').value = '';
       document.getElementById('chequeBancoEmisor').value = '';
       document.getElementById('chequeCuentaNumero').value = '';
       document.getElementById('chequeFechaVencimiento').value = '';
+    }
+
+    // Datos de tarjeta debito/credito
+    if (esTarjeta) {
+      pago.tarjetaNombreTitular = (document.getElementById('tarjetaNombreTitular').value || '').trim();
+      pago.tarjetaNumero = (document.getElementById('tarjetaNumero').value || '').trim();
+      pago.tarjetaLote = (document.getElementById('tarjetaLote').value || '').trim();
+      pago.tarjetaCuponNumero = (document.getElementById('tarjetaCuponNumero').value || '').trim();
+      pago.descripcion += ` - ${pago.tarjetaNombreTitular} *${pago.tarjetaNumero}`;
+      // Limpiar campos tarjeta
+      document.getElementById('tarjetaNumero').value = '';
+      document.getElementById('tarjetaLote').value = '';
+      document.getElementById('tarjetaCuponNumero').value = '';
     }
 
     POS.pagos.push(pago);
@@ -693,9 +760,30 @@ const POS = {
   },
 
   async ConfirmarVenta() {
+    // Si estamos en modo cobro de deuda ctacte
+    if (POS._modoCobroDeuda && POS._cobroDeudaData) {
+      const totalACobrar = GetTotalACobrar();
+      const totalPagos = POS.GetTotalPagos();
+      if (Math.abs(totalACobrar - totalPagos) > 0.01) {
+        ShowToast('Aviso', 'El total de pagos no coincide con el importe a cobrar', 'info');
+        return;
+      }
+      const btn = document.getElementById('btnConfirmarVenta');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Procesando cobro...';
+      try {
+        bootstrap.Modal.getInstance(document.getElementById('modalPagos')).hide();
+        await ConfirmarCobroDeuda();
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Confirmar Venta';
+      }
+      return;
+    }
+
     // Si estamos en modo cambio con diferencia, redirigir a ConfirmarCambioConVenta
     if (POS._cambioData && POS._cambioData.diferencia > 0) {
-      const totalACobrar = POS._cambioData.diferencia;
+      const totalACobrar = GetTotalACobrar();
       const totalPagos = POS.GetTotalPagos();
       if (Math.abs(totalACobrar - totalPagos) > 0.01) {
         ShowToast('Aviso', 'El total de pagos no coincide con la diferencia a cobrar', 'info');
@@ -1006,9 +1094,24 @@ function RenderPOSItems() {
 }
 
 function GetTotalACobrar() {
-  if (POS._cambioData && POS._cambioData.diferencia > 0) return POS._cambioData.diferencia;
   if (POS._totalConRecargo > 0) return POS._totalConRecargo;
+  if (POS._modoCobroDeuda && POS._cobroDeudaData) return POS._cobroDeudaData.total;
+  if (POS._cambioData && POS._cambioData.diferencia > 0) return POS._cambioData.diferencia;
   return POS.GetTotal();
+}
+
+function ToggleTitularTarjeta() {
+  const chk = document.getElementById('tarjetaMismoTitular');
+  const input = document.getElementById('tarjetaNombreTitular');
+  if (!chk || !input) return;
+  if (chk.checked && POS.cliente) {
+    input.value = (POS.cliente.NOMBRE || '').trim();
+    input.readOnly = true;
+  } else {
+    input.value = '';
+    input.readOnly = false;
+    input.focus();
+  }
 }
 
 function GetTipoCobroPagoSel() {
@@ -1046,18 +1149,22 @@ function AplicarRecargo(totalBase) {
   }
 
   const totalPagos = POS.GetTotalPagos();
+  // Lo que falta pagar SIN recargo
+  const restanteBase = totalBase - totalPagos;
 
   // Mostrar siempre si hay comprobante o plan seleccionado
   if (compSel || origen === 'plan') {
-    // Calcular el total con recargo siempre sobre el total base completo
-    let totalConRecargo = totalBase;
+    // Calcular recargo solo sobre el restante (lo que falta pagar), no sobre el total completo
+    let restanteConRecargo = restanteBase;
     if (coeficiente > 0 && coeficiente !== 1) {
-      totalConRecargo = totalBase / coeficiente;
+      restanteConRecargo = restanteBase / coeficiente;
     } else if (interes > 0) {
-      totalConRecargo = totalBase * (1 + interes / 100);
+      restanteConRecargo = restanteBase * (1 + interes / 100);
     }
-    const hayRecargo = Math.abs(totalConRecargo - totalBase) > 0.01;
-    const restante = totalConRecargo - totalPagos;
+    restanteConRecargo = Math.round(restanteConRecargo * 100) / 100;
+    const hayRecargo = Math.abs(restanteConRecargo - restanteBase) > 0.01;
+    // Total a pagar = pagos ya hechos + restante con recargo
+    const totalFinal = totalPagos + restanteConRecargo;
 
     div.classList.remove('d-none');
     div.innerHTML = `
@@ -1068,39 +1175,38 @@ function AplicarRecargo(totalBase) {
           <span>Coeficiente: <strong>${coeficiente}</strong></span>
           ${hayRecargo ? `
           <span>|</span>
-          <span>Base: ${FormatMoney(totalBase)}</span>
+          <span>Base: ${FormatMoney(restanteBase)}</span>
           <span class="fs-5">&rarr;</span>
-          <span class="text-danger fs-5 fw-bold">${FormatMoney(totalConRecargo)}</span>
+          <span class="text-danger fs-5 fw-bold">${FormatMoney(restanteConRecargo)}</span>
           ` : ''}
         </div>
       </div>`;
-    POS._totalConRecargo = totalConRecargo;
+    POS._totalConRecargo = totalFinal;
 
     // Actualizar Total a Pagar y Restante con el total recargado
-    document.getElementById('pagoTotalVenta').textContent = FormatMoney(totalConRecargo);
-    document.getElementById('pagoRestante').textContent = FormatMoney(restante);
-    document.getElementById('pagoRestante').className = restante > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
+    document.getElementById('pagoTotalVenta').textContent = FormatMoney(totalFinal);
+    document.getElementById('pagoRestante').textContent = FormatMoney(restanteConRecargo);
+    document.getElementById('pagoRestante').className = restanteConRecargo > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
 
     // Solo pre-llenar importe si queda algo pendiente
-    if (restante > 0.01) {
-      document.getElementById('pagoImporte').value = restante.toFixed(2);
+    if (restanteConRecargo > 0.01) {
+      document.getElementById('pagoImporte').value = restanteConRecargo.toFixed(2);
     } else {
       document.getElementById('pagoImporte').value = '';
     }
     ActualizarBotonConfirmar();
   } else {
     POS._totalConRecargo = 0;
-    const restante = totalBase - totalPagos;
     div.classList.add('d-none');
     div.innerHTML = '';
 
     // Restaurar Total a Pagar y Restante al importe base (sin recargo)
     document.getElementById('pagoTotalVenta').textContent = FormatMoney(totalBase);
-    document.getElementById('pagoRestante').textContent = FormatMoney(restante);
-    document.getElementById('pagoRestante').className = restante > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
+    document.getElementById('pagoRestante').textContent = FormatMoney(restanteBase);
+    document.getElementById('pagoRestante').className = restanteBase > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
 
-    if (restante > 0.01) {
-      document.getElementById('pagoImporte').value = restante.toFixed(2);
+    if (restanteBase > 0.01) {
+      document.getElementById('pagoImporte').value = restanteBase.toFixed(2);
     } else {
       document.getElementById('pagoImporte').value = '';
     }
@@ -1108,20 +1214,33 @@ function AplicarRecargo(totalBase) {
   }
 }
 
-function RenderPagosModal() {
+async function RenderPagosModal() {
   // Usar siempre el total base (sin recargo) para calcular; AplicarRecargo actualizará los labels
-  const baseTotal = POS._cambioData && POS._cambioData.diferencia > 0 ? POS._cambioData.diferencia : POS.GetTotal();
+  const esCobroDeuda = POS._modoCobroDeuda && POS._cobroDeudaData;
+  let baseTotal;
+  if (esCobroDeuda) {
+    baseTotal = POS._cobroDeudaData.total;
+  } else if (POS._cambioData && POS._cambioData.diferencia > 0) {
+    baseTotal = POS._cambioData.diferencia;
+  } else {
+    baseTotal = POS.GetTotal();
+  }
   const total = baseTotal;
   const totalPagos = POS.GetTotalPagos();
   const restante = total - totalPagos;
 
-  // ── 1. Poblar TiposCobrosPagos (TIPOMOVIMIENTO != 'E') ──
+  // ── 1. Poblar TiposCobrosPagos (TIPOMOVIMIENTO != 'E', excluir CTACTE en cobro deuda) ──
   const sel = document.getElementById('pagoTipo');
   const prevTipo = POS._resetTipoPago ? '' : sel.value;
   POS._resetTipoPago = false;
   sel.innerHTML = '';
   State.tiposCobrosPagos
-    .filter(t => (t.TIPOMOVIMIENTO || '').trim() !== 'E')
+    .filter(t => {
+      const mov = (t.TIPOMOVIMIENTO || '').trim();
+      if (mov === 'E') return false;
+      if (esCobroDeuda && mov === 'X') return false; // Excluir CTACTE en cobro de deuda
+      return true;
+    })
     .forEach(t => {
       const opt = document.createElement('option');
       opt.value = t.GUID.trim();
@@ -1135,7 +1254,7 @@ function RenderPagosModal() {
   const tipoNum = tipoSel ? tipoSel.TIPO : null;
   const esCtaCte = tipoMov === 'X';
   const esEfectivo = tipoSel ? (tipoSel.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO' : false;
-  const esCreditoDev = tipoSel ? (tipoSel.DESCRIPCION || '').trim().toUpperCase().indexOf('CREDITO') >= 0 && (tipoSel.DESCRIPCION || '').trim().toUpperCase().indexOf('DEV') >= 0 : false;
+  const esCreditoDev = tipoSel ? tipoSel.TIPO === 9 : false;
   const esNoEfectivo = !esEfectivo;
 
   // ── 2. Poblar Comprobantes filtrados por TIPO del TipoCobroPago ──
@@ -1145,14 +1264,23 @@ function RenderPagosModal() {
   const comprobantes = tipoNum !== null ? State.tcPagos.filter(t => t.TIPO === tipoNum) : [];
   if (comprobantes.length > 0) {
     divComp.classList.remove('d-none');
-    selComp.innerHTML = '<option value="">Seleccione...</option>';
-    comprobantes.forEach(tc => {
+    if (comprobantes.length === 1) {
+      selComp.innerHTML = '';
       const opt = document.createElement('option');
-      opt.value = tc.GUID.trim();
-      opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
+      opt.value = comprobantes[0].GUID.trim();
+      opt.textContent = (comprobantes[0].TIPO_COMPROBANTE || '').trim();
       selComp.appendChild(opt);
-    });
-    if (prevComp && selComp.querySelector(`option[value="${prevComp}"]`)) selComp.value = prevComp;
+      selComp.value = opt.value;
+    } else {
+      selComp.innerHTML = '<option value="">Seleccione...</option>';
+      comprobantes.forEach(tc => {
+        const opt = document.createElement('option');
+        opt.value = tc.GUID.trim();
+        opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
+        selComp.appendChild(opt);
+      });
+      if (prevComp && selComp.querySelector(`option[value="${prevComp}"]`)) selComp.value = prevComp;
+    }
   } else {
     divComp.classList.add('d-none');
     selComp.innerHTML = '';
@@ -1191,15 +1319,83 @@ function RenderPagosModal() {
     document.getElementById('pagoCreditoDev').innerHTML = '<option value="">Seleccione cliente primero</option>';
   }
 
+  // ── 5b. Notificación proactiva de créditos por devoluciones ──
+  const divCreditoAviso = document.getElementById('creditoDevAviso');
+  if (divCreditoAviso) divCreditoAviso.remove();
+  const yaUsaCreditoDev = POS.pagos.some(p => p._esCreditoDev);
+  if (!esCobroDeuda && POS.cliente && !yaUsaCreditoDev) {
+    try {
+      const creditos = await API.GetCreditosCliente(POS.cliente.GUID.trim());
+      const creditosActivos = creditos.filter(c => {
+        const disponible = c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO);
+        return disponible > 0.01;
+      });
+      if (creditosActivos.length > 0) {
+        const totalCredito = creditosActivos.reduce((sum, c) => sum + (c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO)), 0);
+        const avisoEl = document.createElement('div');
+        avisoEl.id = 'creditoDevAviso';
+        avisoEl.className = 'alert alert-info border-info py-2 px-3 mb-2 d-flex align-items-center justify-content-between';
+        avisoEl.innerHTML = `
+          <div>
+            <i class="bi bi-gift me-2"></i>
+            <strong>${(POS.cliente.NOMBRE || '').trim()}</strong> tiene crédito por devoluciones:
+            <span class="fw-bold text-success">${FormatMoney(totalCredito)}</span>
+          </div>
+          <button class="btn btn-sm btn-info" onclick="AplicarCreditoDevAutomatico()">
+            <i class="bi bi-plus-circle me-1"></i>Aplicar crédito
+          </button>
+        `;
+        const pagoTotalEl = document.getElementById('pagoTotalVenta');
+        pagoTotalEl.parentElement.insertBefore(avisoEl, pagoTotalEl.parentElement.firstChild);
+      }
+    } catch (_) {}
+  }
+
+  // ── 5c. Auto-aplicar crédito de QR escaneado ──
+  if (POS._creditoQR && !yaUsaCreditoDev && !esCobroDeuda) {
+    const cqr = POS._creditoQR;
+    POS._creditoQR = null; // Consumir para no re-aplicar
+    // Seleccionar tipo CREDITO DEVOLUCION y re-renderizar
+    const tipoCredDev = State.tiposCobrosPagos.find(t => t.TIPO === 9);
+    if (tipoCredDev) {
+      const sel = document.getElementById('pagoTipo');
+      sel.value = tipoCredDev.GUID.trim();
+      // Diferir para que se actualice el tipo y se carguen los créditos
+      setTimeout(async () => {
+        await RenderPagosModal();
+        // Auto-seleccionar el crédito escaneado en el selector
+        const selCredito = document.getElementById('pagoCreditoDev');
+        if (selCredito) {
+          for (const opt of selCredito.options) {
+            if (opt.value && opt.value.includes(cqr.guid)) {
+              selCredito.value = opt.value;
+              selCredito.dispatchEvent(new Event('change'));
+              break;
+            }
+          }
+        }
+      }, 300);
+      return; // Sale de RenderPagosModal porque se va a re-invocar
+    }
+  }
+
   const reqCliente = POS.RequiereCliente();
   const reqFactura = POS.RequiereFactura();
   const soloEfectivo = POS.SoloEfectivoOCtaCte();
 
-  // Indicar si es cobro de diferencia por cambio
+  // Indicar contexto del cobro (cambio o deuda ctacte)
   const lblTotal = document.getElementById('pagoTotalVenta');
   lblTotal.textContent = FormatMoney(total);
   const cambioInfoEl = document.getElementById('cambioInfoPagos');
-  if (POS._cambioData && POS._cambioData.diferencia > 0) {
+  if (esCobroDeuda) {
+    if (!cambioInfoEl) {
+      const info = document.createElement('div');
+      info.id = 'cambioInfoPagos';
+      info.className = 'alert alert-primary py-1 px-2 mb-2 small';
+      info.innerHTML = `<i class="bi bi-cash-coin me-1"></i>Cobro Cta. Cte.: <strong>${POS._cobroDeudaData.items.length} comprobante${POS._cobroDeudaData.items.length > 1 ? 's' : ''}</strong> — Total: <strong>${FormatMoney(POS._cobroDeudaData.total)}</strong>`;
+      lblTotal.parentElement.insertBefore(info, lblTotal.parentElement.firstChild);
+    }
+  } else if (POS._cambioData && POS._cambioData.diferencia > 0) {
     if (!cambioInfoEl) {
       const info = document.createElement('div');
       info.id = 'cambioInfoPagos';
@@ -1230,9 +1426,7 @@ function RenderPagosModal() {
                 <strong>${(POS.cliente.NOMBRE || '').trim()}</strong>
                 <small class="text-muted ms-2">CUIT: ${(POS.cliente.CUIT || '').trim()}</small>
               </div>
-              <button class="btn btn-sm btn-outline-danger" onclick="POS.cliente = null; RenderPagosModal();">
-                <i class="bi bi-x me-1"></i>Cambiar
-              </button>
+              ${esCobroDeuda ? '' : `<button class="btn btn-sm btn-outline-danger" onclick="POS.cliente = null; RenderPagosModal();"><i class="bi bi-x me-1"></i>Cambiar</button>`}
             </div>
       `;
 
@@ -1309,9 +1503,7 @@ function RenderPagosModal() {
           <span class="fw-semibold">Cliente:</span>
           <span class="badge bg-primary badge-lg"><i class="bi bi-person-fill me-1"></i>${(POS.cliente.NOMBRE || '').trim()}</span>
           <small class="text-muted">CUIT: ${(POS.cliente.CUIT || '').trim()}</small>
-          <button class="btn btn-sm btn-outline-danger" onclick="POS.cliente = null; RenderPagosModal();">
-            <i class="bi bi-x"></i>
-          </button>
+          ${esCobroDeuda ? '' : `<button class="btn btn-sm btn-outline-danger" onclick="POS.cliente = null; RenderPagosModal();"><i class="bi bi-x"></i></button>`}
         </div>
       `;
     } else {
@@ -1331,12 +1523,16 @@ function RenderPagosModal() {
   const bloqueaAgregar = esNoEfectivo && !POS.cliente;
   document.getElementById('btnAgregarPago').disabled = bloqueaAgregar;
 
-  // Si es CTA_CTE con crédito excedido, también bloquear
+  // Si es CTA_CTE con crédito excedido, también bloquear — refrescar saldo real desde DB
   const alertaCredito = document.getElementById('pagoCreditoAlerta');
   alertaCredito.className = 'd-none mb-3';
   alertaCredito.innerHTML = '';
   let creditoExcedido = false;
   if (esCtaCte && POS.cliente) {
+    try {
+      const saldoData = await API.GetClienteSaldo(POS.cliente.GUID);
+      POS.cliente.SALDO = saldoData.Saldo || 0;
+    } catch (_) {}
     const limite = POS.cliente.LIMITE_CREDITO || 0;
     const saldo = POS.cliente.SALDO || 0;
     const totalVentaCtaCte = restante > 0 ? restante : total;
@@ -1364,7 +1560,18 @@ function RenderPagosModal() {
 
   // ── Zona de Factura ──
   const zonaFactura = document.getElementById('pagoFacturaZona');
-  if (reqFactura) {
+  const yaFacturado = esCobroDeuda && POS._cobroDeudaData && POS._cobroDeudaData.todosConFactura;
+  if (yaFacturado) {
+    POS.emitirFactura = false;
+    zonaFactura.innerHTML = `
+      <div class="alert alert-secondary py-2 d-flex align-items-center mb-0">
+        <i class="bi bi-check-circle me-2 fs-5"></i>
+        <div>
+          <strong>Comprobante fiscal ya emitido</strong> — No se generará nueva factura.
+        </div>
+      </div>
+    `;
+  } else if (reqFactura) {
     POS.emitirFactura = true;
     zonaFactura.innerHTML = `
       <div class="alert alert-info py-2 d-flex align-items-center mb-0">
@@ -2341,7 +2548,7 @@ async function SeleccionarVentaDev(guid) {
                   <td>${(item.DESCRIPCION || '').trim()}</td>
                   <td>${item.NUMERO || '-'}</td>
                   <td class="text-center">${item.RESTANTE}</td>
-                  <td class="text-center"><input type="number" class="form-control form-control-sm qty-input devQty" data-idx="${i}" value="${item.RESTANTE}" min="1" max="${item.RESTANTE}"></td>
+                  <td class="text-center"><input type="number" class="form-control form-control-sm qty-input devQty d-inline-block" style="width:70px" data-idx="${i}" value="${item.RESTANTE}" min="1" max="${item.RESTANTE}"></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2470,10 +2677,17 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
   const motivo = `[${tipoDevolucion}] ${motivoTexto}`;
 
   const items = [];
+  let errorCantidad = false;
   checks.forEach(cb => {
     const idx = parseInt(cb.dataset.idx);
     const qty = parseInt(document.querySelectorAll('.devQty')[idx].value) || 1;
     const orig = originalItems[idx];
+    const maxDisponible = orig.RESTANTE || 0;
+    if (qty > maxDisponible || qty < 1) {
+      errorCantidad = true;
+      ShowToast('Error', `"${(orig.DESCRIPCION || orig.ARTICULO || '').trim()}": cantidad a devolver (${qty}) supera la disponible (${maxDisponible})`, 'error');
+      return;
+    }
     items.push({
       guidArticulo: orig.GUIDARTICULOS || '',
       guidMovimientoArticulo: orig.GUIDMOVIMIENTOARTICULOS || '',
@@ -2486,6 +2700,7 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
       precioCosto: orig.COSTO || 0,
     });
   });
+  if (errorCantidad) return;
 
   const emitirNotaCredito = document.getElementById('devEmitirNC')?.checked || false;
 
@@ -2531,6 +2746,69 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
   } catch (err) {
     ShowToast('Error', err.message, 'error');
   }
+}
+
+// ── Aplicar crédito de devolución escaneando QR del comprobante ──
+async function AplicarCreditoDesdeQR(guidDevolucion) {
+  try {
+    const credito = await API.GetCreditoByDevolucion(guidDevolucion);
+    if (!credito) {
+      ShowToast('Sin crédito', 'No se encontró crédito activo para esta devolución', 'info');
+      return;
+    }
+    const disponible = credito.MONTODISPONIBLE || (credito.MONTOORIGINAL - credito.MONTOUSADO);
+    if (disponible <= 0.01) {
+      ShowToast('Crédito agotado', 'Este crédito de devolución ya fue utilizado', 'info');
+      return;
+    }
+    if (credito.ESTADO !== 'ACTIVO') {
+      ShowToast('Crédito inactivo', `El crédito está en estado: ${credito.ESTADO}`, 'info');
+      return;
+    }
+
+    // Asignar cliente del crédito si no hay cliente seleccionado
+    if (!POS.cliente && credito.GUIDCLIENTES) {
+      try {
+        POS.cliente = await API.GetClienteByGuid(credito.GUIDCLIENTES.trim());
+        const el = document.getElementById('posClienteInfo');
+        if (el && POS.cliente) {
+          el.innerHTML = `
+            <span class="badge bg-primary badge-lg me-2"><i class="bi bi-person-fill me-1"></i>${(POS.cliente.NOMBRE || '').trim()}</span>
+            <small class="text-muted">CUIT: ${(POS.cliente.CUIT || '').trim()} | Saldo: ${FormatMoney(POS.cliente.SALDO)}</small>
+            <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>';">
+              <i class="bi bi-x"></i>
+            </button>
+          `;
+        }
+      } catch (_) {}
+    }
+
+    // Guardar crédito QR para usarlo al abrir el modal de pagos
+    POS._creditoQR = { guid: credito.GUID.trim(), disponible, guidCliente: (credito.GUIDCLIENTES || '').trim(), clienteNombre: (credito.ClienteNombre || '').trim() };
+
+    const totalVenta = POS.GetTotal();
+    if (totalVenta <= 0) {
+      ShowToast('Crédito detectado', `Crédito de ${FormatMoney(disponible)} a nombre de ${(credito.ClienteNombre || '').trim()}. Agregue artículos para aplicarlo.`, 'success');
+      return;
+    }
+
+    ShowToast('Crédito detectado', `Crédito disponible: ${FormatMoney(disponible)}. Se aplicará al confirmar el pago.`, 'success');
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
+}
+
+// ── Aplicar crédito de devolución automáticamente desde el banner ──
+async function AplicarCreditoDevAutomatico() {
+  // Buscar el tipo de pago "CREDITO DEV" y seleccionarlo
+  const sel = document.getElementById('pagoTipo');
+  const tipoCredDev = State.tiposCobrosPagos.find(t => t.TIPO === 9);
+  if (!tipoCredDev) {
+    ShowToast('Error', 'No se encontró el tipo de pago "Crédito Devolución" configurado', 'error');
+    return;
+  }
+  sel.value = tipoCredDev.GUID.trim();
+  await RenderPagosModal();
 }
 
 // ── Cargar creditos de devolucion disponibles para un cliente ──
@@ -2847,7 +3125,7 @@ async function SeleccionarVentaCambio(guid) {
                   <td>${(item.DESCRIPCION || '').trim()}</td>
                   <td>${item.NUMERO || '-'}</td>
                   <td class="text-center">${item.RESTANTE}</td>
-                  <td class="text-center"><input type="number" class="form-control form-control-sm qty-input cambQty" data-idx="${i}" value="${item.RESTANTE}" min="1" max="${item.RESTANTE}"></td>
+                  <td class="text-center"><input type="number" class="form-control form-control-sm qty-input cambQty d-inline-block" style="width:70px" data-idx="${i}" value="${item.RESTANTE}" min="1" max="${item.RESTANTE}"></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2901,10 +3179,17 @@ function PrepararCambioParaPOS(guidRemitoOriginal, originalItems, guidCliente, n
   }
 
   const itemsCambio = [];
+  let errorCantidad = false;
   checks.forEach(cb => {
     const idx = parseInt(cb.dataset.idx);
     const qty = parseInt(document.querySelectorAll('.cambQty')[idx].value) || 1;
     const orig = originalItems[idx];
+    const maxDisponible = orig.RESTANTE || 0;
+    if (qty > maxDisponible || qty < 1) {
+      errorCantidad = true;
+      ShowToast('Error', `"${(orig.DESCRIPCION || orig.ARTICULO || '').trim()}": cantidad a cambiar (${qty}) supera la disponible (${maxDisponible})`, 'error');
+      return;
+    }
     itemsCambio.push({
       guidArticulo: orig.GUIDARTICULOS || '',
       guidMovimientoArticulo: orig.GUIDMOVIMIENTOARTICULOS || '',
@@ -2917,6 +3202,7 @@ function PrepararCambioParaPOS(guidRemitoOriginal, originalItems, guidCliente, n
       precioCosto: orig.COSTO || 0,
     });
   });
+  if (errorCantidad) return;
 
   let totalCambio = 0;
   for (const item of itemsCambio) {
@@ -3036,6 +3322,8 @@ async function ConfirmarCambioConVenta() {
       tipoCambio: cambio.tipoCambio,
       itemsCambio: cambio.itemsCambio,
       itemsVenta: POS.items,
+      emitirFactura: POS.emitirFactura,
+      cuit: POS.cliente ? (POS.cliente.CUIT || '').trim() : '',
     };
 
     // Si hay diferencia a cobrar, enviar los pagos
@@ -3048,11 +3336,17 @@ async function ConfirmarCambioConVenta() {
     delete POS._cambioData;
     _devCambioCliente = null;
     const msgDif = result.diferencia > 0 ? ` | Diferencia cobrada: ${FormatMoney(result.diferencia)}` : '';
+    const msgFac = result.factura ? ` | Factura: ${result.factura}` : '';
     ShowToast('Cambio exitoso',
-      `Cambio: ${FormatMoney(result.totalCambio)} | Nueva venta: ${FormatMoney(result.totalVenta)}${msgDif} | Pago: ${result.formaPago}`,
+      `Cambio: ${FormatMoney(result.totalCambio)} | Nueva venta: ${FormatMoney(result.totalVenta)}${msgDif}${msgFac} | Pago: ${result.formaPago}`,
       'success');
     POS.Reset();
     RenderPOS(document.getElementById('mainContent'));
+
+    // Si se emitió factura, mostrar el comprobante con opciones de autorizar/enviar
+    if (result.guidFactura) {
+      MostrarFactura(result.guidFactura);
+    }
   } catch (err) {
     ShowToast('Error', err.message, 'error');
   } finally {
@@ -3578,7 +3872,8 @@ function OnMedioPagoEgresoChange(selId, divCuentaId, selCuentaId) {
         + cuentasBanco.map(c => {
           const nombre = (c.NUMEROCUENTA || c.ALIAS || '').trim();
           const tipo = (c.TIPOCUENTA || '').trim();
-          return `<option value="${c.GUID.trim()}" data-guidbancos="${(c.GUIDBANCOS || '').trim()}">${nombre} (${tipo})</option>`;
+          const banco = (c.NombreBanco || '').trim();
+          return `<option value="${c.GUID.trim()}" data-guidbancos="${(c.GUIDBANCOS || '').trim()}">${banco ? banco + ' - ' : ''}${nombre} (${tipo})</option>`;
         }).join('');
     } else {
       divCuenta.classList.add('d-none');
@@ -4152,12 +4447,34 @@ function RenderClientes(container) {
           <div class="col-md-6">
             <input type="text" id="clienteSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIT..." onkeyup="BuscarClientes()">
           </div>
+          <div class="col-md-6 text-end">
+            <button class="btn btn-outline-warning btn-sm" onclick="RecalcularSaldosClientes()" id="btnRecalcSaldos">
+              <i class="bi bi-calculator me-1"></i>Recalcular saldos
+            </button>
+          </div>
         </div>
       </div>
     </div>
     <div id="clientesResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
   `;
   BuscarClientes();
+}
+
+async function RecalcularSaldosClientes() {
+  const btn = document.getElementById('btnRecalcSaldos');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Recalculando...';
+  try {
+    const result = await API.RecalcularSaldosClientes();
+    const msg = `Saldos: ${result.actualizados} actualizado(s)` + (result.reconciliados ? ` | Movimientos reconciliados: ${result.reconciliados}` : '');
+    ShowToast('Recálculo completado', msg, 'success');
+    BuscarClientes(); // Refrescar la tabla
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-calculator me-1"></i>Recalcular saldos';
+  }
 }
 
 async function BuscarClientes() {
@@ -4199,24 +4516,252 @@ async function BuscarClientes() {
 
 async function VerMovimientosCliente(guid, nombre) {
   const hoy = TodayISO();
+  const d30 = new Date(); d30.setDate(d30.getDate() - 30);
+  const hace30dias = d30.toISOString().slice(0, 10);
   const body = document.getElementById('detalleVentaBody');
   document.querySelector('#modalDetalleVenta .modal-title').innerHTML = `<i class="bi bi-person me-2"></i>${nombre}`;
   body.innerHTML = `
-    <div class="row g-2 mb-3 align-items-end">
-      <div class="col-md-3"><label class="form-label mb-0">Desde</label><input type="date" id="cliMovDesde" class="form-control form-control-sm" value="${hoy}"></div>
-      <div class="col-md-3"><label class="form-label mb-0">Hasta</label><input type="date" id="cliMovHasta" class="form-control form-control-sm" value="${hoy}"></div>
-      <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" onclick="CargarMovimientosCliente('${guid}')"><i class="bi bi-search me-1"></i>Buscar</button></div>
-    </div>
-    <ul class="nav nav-tabs mb-3"><li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabCliMov">Movimientos Cta. Cte.</a></li><li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabCliComp">Comprobantes</a></li></ul>
+    <ul class="nav nav-tabs mb-3">
+      <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabCliDeuda">Deuda Activa</a></li>
+      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabCliComp">Comprobantes</a></li>
+      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabCliMov">Movimientos Cta. Cte.</a></li>
+    </ul>
     <div class="tab-content">
-      <div class="tab-pane fade show active" id="tabCliMov"><div id="cliMovResultados"></div></div>
-      <div class="tab-pane fade" id="tabCliComp"><div id="cliCompResultados"></div></div>
+      <div class="tab-pane fade show active" id="tabCliDeuda"><div id="cliDeudaResultados"></div></div>
+      <div class="tab-pane fade" id="tabCliComp">
+        <div class="row g-2 mb-3 align-items-end">
+          <div class="col-md-3"><label class="form-label mb-0">Desde</label><input type="date" id="cliCompDesde" class="form-control form-control-sm" value="${hoy}"></div>
+          <div class="col-md-3"><label class="form-label mb-0">Hasta</label><input type="date" id="cliCompHasta" class="form-control form-control-sm" value="${hoy}"></div>
+          <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" onclick="CargarComprobantesCliente('${guid}')"><i class="bi bi-search me-1"></i>Buscar</button></div>
+        </div>
+        <div id="cliCompResultados"></div>
+      </div>
+      <div class="tab-pane fade" id="tabCliMov">
+        <div class="row g-2 mb-3 align-items-end">
+          <div class="col-md-3"><label class="form-label mb-0">Desde</label><input type="date" id="cliMovDesde" class="form-control form-control-sm" value="${hace30dias}"></div>
+          <div class="col-md-3"><label class="form-label mb-0">Hasta</label><input type="date" id="cliMovHasta" class="form-control form-control-sm" value="${hoy}"></div>
+          <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" onclick="CargarMovimientosCliente('${guid}')"><i class="bi bi-search me-1"></i>Buscar</button></div>
+        </div>
+        <div id="cliMovResultados"></div>
+      </div>
     </div>
   `;
   new bootstrap.Modal(document.getElementById('modalDetalleVenta')).show();
-  CargarMovimientosCliente(guid);
+  CargarDeudaActiva(guid);
 }
 
+// ── Deuda Activa (Tab 1) ──
+async function CargarDeudaActiva(guid) {
+  const div = document.getElementById('cliDeudaResultados');
+  div.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+  try {
+    const [deudas, saldoData] = await Promise.all([
+      API.GetClienteDeudaActiva(guid),
+      API.GetClienteSaldo(guid),
+    ]);
+    const saldoActual = saldoData.Saldo || 0;
+    window._deudaActivaGuid = guid;
+
+    if (deudas.length === 0) {
+      div.innerHTML = `<div class="alert alert-light border py-2 mb-2"><strong>Saldo actual (Cta. Cte.):</strong> <span class="${saldoActual > 0 ? 'text-danger' : saldoActual < 0 ? 'text-success' : ''} fw-bold">${FormatMoney(saldoActual)}</span></div>
+        <div class="alert alert-success py-2"><i class="bi bi-check-circle me-1"></i>Sin deuda activa.</div>`;
+    } else {
+      let totalDeuda = 0;
+      div.innerHTML = `
+        <div class="alert alert-light border py-2 mb-2 d-flex justify-content-between align-items-center">
+          <span><strong>Saldo actual (Cta. Cte.):</strong> <span class="${saldoActual > 0 ? 'text-danger' : saldoActual < 0 ? 'text-success' : ''} fw-bold">${FormatMoney(saldoActual)}</span></span>
+          <button class="btn btn-success btn-sm" id="btnCobrarDeuda" onclick="CobrarDeudaSeleccionada('${guid}')" disabled>
+            <i class="bi bi-cash-stack me-1"></i>Cobrar seleccionados
+          </button>
+        </div>
+        <table class="table table-sm table-hover">
+          <thead class="table-light">
+            <tr>
+              <th><input type="checkbox" id="deudaCheckAll" onchange="ToggleAllDeuda(this.checked)"></th>
+              <th>Fecha</th>
+              <th>Descripcion</th>
+              <th>Comprobante</th>
+              <th class="text-end">Original</th>
+              <th class="text-end">Pagado</th>
+              <th class="text-end">Pendiente</th>
+              <th class="text-center">A cobrar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${deudas.map((d, i) => {
+              const debe = d.DEBE || 0;
+              const haber = d.HABER || 0;
+              const totalParcial = d.TOTALPARCIAL || 0;
+              const pendiente = d.PENDIENTE != null ? d.PENDIENTE : (debe - haber);
+              const neto = debe > 0 ? pendiente : -haber;
+              totalDeuda += neto;
+              const factura = (d.NUMERO_FACTURA || '').trim();
+              const facTipo = (d.FacturaTipo || '').trim();
+              const esCredito = haber > 0 && debe === 0;
+              const badgeColor = esCredito ? 'success' : 'info text-dark';
+              const parcialInfo = totalParcial > 0 ? ` <small class="text-muted">(pagado: ${FormatMoney(totalParcial)})</small>` : '';
+              const original = debe > 0 ? debe : haber;
+              return `<tr class="${esCredito ? 'table-success' : ''}">
+                <td><input type="checkbox" class="deudaCheck" data-idx="${i}" data-guid="${(d.GUID || '').trim()}" data-max="${neto}" data-factura="${(d.NUMERO_FACTURA || '').trim()}" onchange="OnDeudaCheckChange(this)"></td>
+                <td>${FormatFechaInt(d.FECHA)}</td>
+                <td class="small">${(d.DESCRIPCION || '').trim()}</td>
+                <td>${factura ? `<span class="badge bg-${badgeColor}">${facTipo} ${factura}</span>` : '<span class="text-muted">-</span>'}</td>
+                <td class="text-end ${debe > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(original)}</td>
+                <td class="text-end">${totalParcial > 0 ? FormatMoney(totalParcial) : '<span class="text-muted">-</span>'}</td>
+                <td class="text-end fw-semibold ${neto > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(Math.abs(neto))}</td>
+                <td class="text-center">
+                  <input type="number" class="form-control form-control-sm deudaCobrar d-inline-block d-none" style="width:100px"
+                    data-idx="${i}" value="${Math.abs(neto).toFixed(2)}" min="0.01" max="${Math.abs(neto).toFixed(2)}" step="0.01"
+                    onchange="ActualizarTotalDeudaSel()">
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot class="table-light">
+            <tr class="fw-bold">
+              <td colspan="7" class="text-end">Saldo deuda activa:</td>
+              <td class="text-end ${totalDeuda > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(totalDeuda)}</td>
+            </tr>
+            <tr id="deudaSelTotal" class="d-none fw-bold">
+              <td colspan="7" class="text-end">Total a cobrar:</td>
+              <td class="text-end text-primary" id="deudaSelImporte"></td>
+            </tr>
+          </tfoot>
+        </table>`;
+    }
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+function ToggleAllDeuda(checked) {
+  document.querySelectorAll('.deudaCheck').forEach(cb => {
+    cb.checked = checked;
+    OnDeudaCheckChange(cb);
+  });
+}
+
+function OnDeudaCheckChange(cb) {
+  const idx = cb.dataset.idx;
+  const input = document.querySelector(`.deudaCobrar[data-idx="${idx}"]`);
+  if (cb.checked) {
+    input.classList.remove('d-none');
+  } else {
+    input.classList.add('d-none');
+    // Restaurar al máximo cuando se desmarca
+    input.value = Math.abs(parseFloat(cb.dataset.max) || 0).toFixed(2);
+  }
+  ActualizarTotalDeudaSel();
+}
+
+function ActualizarTotalDeudaSel() {
+  const checks = document.querySelectorAll('.deudaCheck:checked');
+  let total = 0;
+  checks.forEach(cb => {
+    const idx = cb.dataset.idx;
+    const input = document.querySelector(`.deudaCobrar[data-idx="${idx}"]`);
+    const max = parseFloat(cb.dataset.max) || 0;
+    let valor = parseFloat(input.value) || 0;
+    // Para débitos (max > 0): valor positivo; para créditos (max < 0): valor negativo
+    if (max > 0) {
+      if (valor > max) { valor = max; input.value = max.toFixed(2); }
+      if (valor < 0.01) { valor = 0.01; input.value = '0.01'; }
+      total += valor;
+    } else {
+      // Créditos: restar del total
+      total += max; // max ya es negativo
+    }
+  });
+  const row = document.getElementById('deudaSelTotal');
+  const imp = document.getElementById('deudaSelImporte');
+  const btn = document.getElementById('btnCobrarDeuda');
+  if (checks.length > 0) {
+    row.classList.remove('d-none');
+    imp.textContent = FormatMoney(total);
+    if (btn) btn.disabled = false;
+  } else {
+    row.classList.add('d-none');
+    if (btn) btn.disabled = true;
+  }
+}
+
+async function ConfirmarCobroDeuda() {
+  const data = POS._cobroDeudaData;
+  if (!data) return;
+  try {
+    const payload = {
+      guidCliente: data.guidCliente,
+      guidSucursal: State.sucursalActual,
+      guidUsuario: (State.usuario && State.usuario.GUID) || '',
+      items: data.items,
+      pagos: POS.pagos,
+      total: data.total,
+      emitirFactura: POS.emitirFactura || false,
+      nombre: POS.cliente ? (POS.cliente.NOMBRE || '').trim() : '',
+      cuit: POS.cliente ? (POS.cliente.CUIT || '').trim() : '',
+    };
+    const result = await API.CobroDeuda(payload);
+    ShowToast('Cobro exitoso', `Se registró el cobro de ${FormatMoney(data.total)}`, 'success');
+    if (result.guidFactura) {
+      MostrarFactura(result.guidFactura);
+    }
+    POS._modoCobroDeuda = false;
+    POS._cobroDeudaData = null;
+    POS.pagos = [];
+    POS.emitirFactura = false;
+    // Refrescar browse de clientes si está visible
+    if (document.getElementById('clientesResultados')) BuscarClientes();
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
+}
+
+async function CobrarDeudaSeleccionada(guidCliente) {
+  const checks = document.querySelectorAll('.deudaCheck:checked');
+  if (checks.length === 0) { ShowToast('Aviso', 'Seleccione al menos un comprobante', 'info'); return; }
+  let total = 0;
+  const items = [];
+  checks.forEach(cb => {
+    const idx = cb.dataset.idx;
+    const input = document.querySelector(`.deudaCobrar[data-idx="${idx}"]`);
+    const max = parseFloat(cb.dataset.max) || 0;
+    let valor = parseFloat(input.value) || 0;
+    if (max > 0) {
+      if (valor > max) valor = max;
+      total += valor;
+    } else {
+      total += max;
+      valor = Math.abs(max);
+    }
+    items.push({ guid: cb.dataset.guid, importe: valor, esParcial: max > 0 && valor < max, factura: (cb.dataset.factura || '').trim() });
+  });
+
+  // Verificar si todos los comprobantes seleccionados ya tienen factura fiscal
+  const todosConFactura = items.length > 0 && items.every(it => it.factura !== '');
+
+  // Auto-setear cliente para que el modal de pagos no pida re-seleccionarlo
+  if (!POS.cliente || POS.cliente.GUID.trim() !== guidCliente.trim()) {
+    try {
+      POS.cliente = await API.GetClienteByGuid(guidCliente);
+    } catch (_) {}
+  }
+
+  // Guardar datos para el cobro de deuda
+  POS._cobroDeudaData = { guidCliente, items, total, todosConFactura };
+  POS._modoCobroDeuda = true;
+  POS.pagos = [];
+  POS._resetTipoPago = true;
+
+  // Cerrar modal de detalle
+  const modalDetalle = bootstrap.Modal.getInstance(document.getElementById('modalDetalleVenta'));
+  if (modalDetalle) modalDetalle.hide();
+
+  // Abrir modal de pagos para cobrar la deuda
+  setTimeout(() => {
+    RenderPagosModal();
+    new bootstrap.Modal(document.getElementById('modalPagos')).show();
+  }, 400);
+}
+
+// ── Movimientos Cta. Cte. (Tab 3) ──
 async function CargarMovimientosCliente(guid) {
   const desde = document.getElementById('cliMovDesde')?.value || '';
   const hasta = document.getElementById('cliMovHasta')?.value || '';
@@ -4225,31 +4770,61 @@ async function CargarMovimientosCliente(guid) {
   if (hasta) params.hasta = hasta;
 
   const divMov = document.getElementById('cliMovResultados');
-  const divComp = document.getElementById('cliCompResultados');
   divMov.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
-  divComp.innerHTML = divMov.innerHTML;
 
   try {
-    const [movs, facts] = await Promise.all([
+    const [data, saldoData] = await Promise.all([
       API.GetClienteMovimientos(guid, params),
-      API.GetClienteFacturas(guid, params),
+      API.GetClienteSaldo(guid),
     ]);
+    const movs = data.movimientos || data;
+    const saldoAnterior = data.saldoAnterior || 0;
+    const saldoActual = saldoData.Saldo || 0;
 
-    // Movimientos Cta. Cte.
-    if (movs.length === 0) {
-      divMov.innerHTML = '<div class="alert alert-info py-2">Sin movimientos en el periodo.</div>';
+    if (movs.length === 0 && saldoAnterior === 0) {
+      divMov.innerHTML = `<div class="alert alert-light border py-2 mb-2"><strong>Saldo actual:</strong> <span class="${saldoActual > 0 ? 'text-danger' : saldoActual < 0 ? 'text-success' : ''} fw-bold">${FormatMoney(saldoActual)}</span></div>
+        <div class="alert alert-info py-2">Sin movimientos en el periodo.</div>`;
     } else {
-      let saldoAcum = 0;
-      divMov.innerHTML = `<table class="table table-sm table-hover"><thead class="table-light"><tr><th>Fecha</th><th>Descripcion</th><th class="text-end">Debe</th><th class="text-end">Haber</th></tr></thead><tbody>
+      let saldoAcum = saldoAnterior;
+      const saldoAnteriorRow = saldoAnterior !== 0
+        ? `<tr class="table-light fst-italic"><td></td><td class="small">Saldo anterior</td><td class="text-end"></td><td class="text-end"></td><td class="text-end fw-semibold ${saldoAnterior > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(saldoAnterior)}</td></tr>`
+        : '';
+      divMov.innerHTML = `<div class="alert alert-light border py-2 mb-2"><strong>Saldo actual (Cta. Cte.):</strong> <span class="${saldoActual > 0 ? 'text-danger' : saldoActual < 0 ? 'text-success' : ''} fw-bold">${FormatMoney(saldoActual)}</span></div>
+        <table class="table table-sm table-hover"><thead class="table-light"><tr><th>Fecha</th><th>Descripcion</th><th class="text-end">Debe</th><th class="text-end">Haber</th><th>Estado</th><th class="text-end">Saldo</th></tr></thead><tbody>
+        ${saldoAnteriorRow ? saldoAnteriorRow.replace('</tr>', '<td></td></tr>') : ''}
         ${movs.map(m => {
           const debe = m.DEBE || 0; const haber = m.HABER || 0;
-          saldoAcum += debe - haber;
-          return `<tr><td>${FormatFechaInt(m.FECHA)}</td><td class="small">${(m.DESCRIPCION || '').trim()}</td><td class="text-end ${debe > 0 ? 'text-danger' : ''}">${debe > 0 ? FormatMoney(debe) : ''}</td><td class="text-end ${haber > 0 ? 'text-success' : ''}">${haber > 0 ? FormatMoney(haber) : ''}</td></tr>`;
+          const totalParcial = m.TOTALPARCIAL || 0;
+          const fp = (m.GUIDFORMAPAGOS || '').trim();
+          const pagado = fp && fp !== '';
+          if (!pagado) saldoAcum += (debe - totalParcial) - haber;
+          const parcialInfo = totalParcial > 0 ? ` <small class="text-muted">(a cuenta: ${FormatMoney(totalParcial)})</small>` : '';
+          const estadoBadge = pagado
+            ? '<span class="badge bg-success">Pagado</span>'
+            : totalParcial > 0
+              ? '<span class="badge bg-info text-dark">Parcial</span>'
+              : '<span class="badge bg-warning text-dark">Pendiente</span>';
+          return `<tr class="${pagado ? 'text-muted' : ''}"><td>${FormatFechaInt(m.FECHA)}</td><td class="small">${(m.DESCRIPCION || '').trim()}${parcialInfo}</td><td class="text-end ${!pagado && debe > 0 ? 'text-danger' : ''}">${debe > 0 ? FormatMoney(debe) : ''}</td><td class="text-end ${!pagado && haber > 0 ? 'text-success' : ''}">${haber > 0 ? FormatMoney(haber) : ''}</td><td>${estadoBadge}</td><td class="text-end fw-semibold ${saldoAcum > 0 ? 'text-danger' : saldoAcum < 0 ? 'text-success' : ''}">${FormatMoney(saldoAcum)}</td></tr>`;
         }).join('')}
-      </tbody><tfoot class="table-light"><tr class="fw-bold"><td colspan="2" class="text-end">Saldo periodo:</td><td colspan="2" class="text-end ${saldoAcum >= 0 ? 'text-danger' : 'text-success'}">${FormatMoney(saldoAcum)}</td></tr></tfoot></table>`;
+      </tbody><tfoot class="table-light"><tr class="fw-bold"><td colspan="5" class="text-end">Saldo:</td><td class="text-end ${saldoAcum > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(saldoAcum)}</td></tr></tfoot></table>`;
     }
+  } catch (err) { divMov.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
 
-    // Comprobantes
+// ── Comprobantes (Tab 2) ──
+async function CargarComprobantesCliente(guid) {
+  const desde = document.getElementById('cliCompDesde')?.value || '';
+  const hasta = document.getElementById('cliCompHasta')?.value || '';
+  const params = {};
+  if (desde) params.desde = desde;
+  if (hasta) params.hasta = hasta;
+
+  const divComp = document.getElementById('cliCompResultados');
+  divComp.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+
+  try {
+    const facts = await API.GetClienteFacturas(guid, params);
+
     if (facts.length === 0) {
       divComp.innerHTML = '<div class="alert alert-info py-2">Sin comprobantes en el periodo.</div>';
     } else {
@@ -4274,7 +4849,7 @@ async function CargarMovimientosCliente(guid) {
       </tbody></table>`;
     }
   } catch (err) {
-    divMov.innerHTML = `<div class="alert alert-danger py-2">${err.message}</div>`;
+    divComp.innerHTML = `<div class="alert alert-danger py-2">${err.message}</div>`;
   }
 }
 

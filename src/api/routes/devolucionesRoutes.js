@@ -17,7 +17,7 @@ router.post('/', async (req, res, next) => {
 // Cambio con venta (atomico: graba cambio + venta nueva + cobro automatico)
 router.post('/cambio', async (req, res, next) => {
   try {
-    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio, itemsCambio, itemsVenta, pagos } = req.body;
+    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio, itemsCambio, itemsVenta, pagos, emitirFactura, cuit } = req.body;
     if (!motivo || !motivo.trim()) {
       return res.status(400).json({ error: 'El motivo del cambio es obligatorio' });
     }
@@ -26,7 +26,7 @@ router.post('/cambio', async (req, res, next) => {
     }
     const data = await devolucionesRepo.CreateCambioConVenta({
       guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio,
-      itemsCambio, itemsVenta, pagos,
+      itemsCambio, itemsVenta, pagos, emitirFactura, cuit,
     });
     res.status(201).json(data);
   } catch (err) { next(err); }
@@ -36,6 +36,15 @@ router.post('/cambio', async (req, res, next) => {
 router.get('/creditos/:guidCliente', async (req, res, next) => {
   try {
     const data = await devolucionesRepo.GetCreditosCliente(req.params.guidCliente);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// Buscar credito por GUID de devolucion (para QR scan)
+router.get('/credito-by-devolucion/:guidDevolucion', async (req, res, next) => {
+  try {
+    const data = await devolucionesRepo.GetCreditoByDevolucion(req.params.guidDevolucion);
+    if (!data) return res.status(404).json({ error: 'No se encontró crédito para esta devolución' });
     res.json(data);
   } catch (err) { next(err); }
 });

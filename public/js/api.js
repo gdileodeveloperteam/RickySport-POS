@@ -65,6 +65,16 @@ const API = (function () {
     const q = new URLSearchParams(params).toString();
     return Request(`/clientes/${guid}/facturas${q ? '?' + q : ''}`);
   }
+  async function GetClienteDeudaActiva(guid) {
+    return Request(`/clientes/${guid}/deuda-activa`);
+  }
+  async function CobroDeuda(data) {
+    return Request('/clientes/cobro-deuda', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async function RecalcularSaldosClientes() {
+    return Request('/clientes/recalcular-saldos', { method: 'POST' });
+  }
 
   async function GetClientesCtaCte(search) {
     const q = search ? `?search=${encodeURIComponent(search)}` : '';
@@ -152,6 +162,10 @@ const API = (function () {
 
   async function GetCreditosCliente(guidCliente) {
     return Request(`/devoluciones/creditos/${guidCliente}`);
+  }
+
+  async function GetCreditoByDevolucion(guidDevolucion) {
+    return Request(`/devoluciones/credito-by-devolucion/${guidDevolucion}`);
   }
 
   // Cambios de mercaderia (atomico: cambio + venta + cobro)
@@ -292,12 +306,12 @@ const API = (function () {
   return {
     Login, GetUsuarios,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
-    GetClientes, CreateCliente, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas,
+    GetClientes, CreateCliente, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, RecalcularSaldosClientes, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
     GetSucursales, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
     GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,
     CreateVenta, GetVentas, GetVentaDetalle, GetFacturaDetalle, GetResumenPagos, GetVentasPorSucursal, GetTotalesDevCambios,
-    CreateDevolucion, GetDevolucionDetalle, GetCreditosCliente, CreateCambioConVenta,
+    CreateDevolucion, GetDevolucionDetalle, GetCreditosCliente, GetCreditoByDevolucion, CreateCambioConVenta,
     CreateTransferencia, GetTransferencias, GetTransferenciaDetalle,
     GetEmpleados, GetEmpleadoAdelantos, GetProveedores,
     CreateGasto, CreateAdelanto, GetGastos,

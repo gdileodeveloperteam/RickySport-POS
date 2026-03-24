@@ -13,6 +13,20 @@ router.post('/', async (req, res, next) => {
   try { res.status(201).json(await clientesRepo.Create(req.body)); } catch (err) { next(err); }
 });
 
+router.post('/recalcular-saldos', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.RecalcularSaldos();
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.post('/cobro-deuda', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.CobroDeuda(req.body);
+    res.status(201).json(data);
+  } catch (err) { next(err); }
+});
+
 router.get('/ctacte', async (req, res, next) => {
   try {
     const data = await clientesRepo.GetCtaCte(req.query.search);
@@ -53,6 +67,13 @@ router.get('/:guid/movimientos', async (req, res, next) => {
 router.get('/:guid/facturas', async (req, res, next) => {
   try {
     const data = await clientesRepo.GetFacturas(req.params.guid, req.query.desde, req.query.hasta);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.get('/:guid/deuda-activa', async (req, res, next) => {
+  try {
+    const data = await clientesRepo.GetDeudaActiva(req.params.guid);
     res.json(data);
   } catch (err) { next(err); }
 });
