@@ -642,4 +642,15 @@ async function CobroDeuda({ guidCliente, guidSucursal, guidUsuario, items, pagos
   }
 }
 
-module.exports = { Create, GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo, RecalcularSaldos, GetMovimientos, GetFacturas, GetDeudaActiva, CobroDeuda };
+async function UpdateContacto(guid, { email, celular }) {
+  const pool = await getPool();
+  const ts = tsNow();
+  await pool.request()
+    .input('guid', sql.Char(16), guid)
+    .input('email', sql.VarChar(255), email || '')
+    .input('celular', sql.VarChar(60), celular || '')
+    .input('ts', sql.Float, ts)
+    .query(`UPDATE Clientes SET EMAIL = @email, CELULAR = @celular, ts = @ts WHERE GUID = @guid`);
+}
+
+module.exports = { Create, GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo, RecalcularSaldos, GetMovimientos, GetFacturas, GetDeudaActiva, CobroDeuda, UpdateContacto };

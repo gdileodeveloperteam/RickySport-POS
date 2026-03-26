@@ -137,10 +137,13 @@ async function GetTransferenciaDetalle(guidTransferencia) {
              ms.FECHA, ms.ESTADO,
              ms.GUIDSUCURSALORIGEN, ms.GUIDSUCURSALDESTINO,
              so.NOMBRE AS SucursalOrigen,
-             sd.NOMBRE AS SucursalDestino
+             sd.NOMBRE AS SucursalDestino,
+             RTRIM(a.DESCRIPCION) AS Descripcion,
+             RTRIM(a.CODIGOARTICULOREL) AS CodigoArticuloRel
       FROM MovimientoStock ms
       LEFT JOIN Sucursales so ON so.GUID = ms.GUIDSUCURSALORIGEN
       LEFT JOIN Sucursales sd ON sd.GUID = ms.GUIDSUCURSALDESTINO
+      LEFT JOIN Articulos a ON a.GUID = ms.GUIDARTICULOS
       WHERE ms.GUIDREMITOSTRANSFERENCIAS = @guidTransf
         AND ms.EGRESO > 0
         AND (ms.dts IS NULL OR ms.dts = 0)

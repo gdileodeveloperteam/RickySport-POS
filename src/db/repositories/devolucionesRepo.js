@@ -643,8 +643,8 @@ async function CreateCambioConVenta({
         await tx.request()
           .input('guid', sql.Char(16), guidPago)
           .input('fecha', sql.Date, todayAR())
-          .input('tipoComprobante', sql.VarChar(30), pago.descripcion || pago.tipo)
-          .input('descripcion', sql.Char(60), `Cambio - ${pago.descripcion || pago.tipo}`)
+          .input('tipoComprobante', sql.VarChar(30), (pago.descripcion || pago.tipo || '').substring(0, 30))
+          .input('descripcion', sql.VarChar(255), `Cambio - ${pago.descripcion || pago.tipo}`)
           .input('importe', sql.Decimal(13, 3), pago.importe)
           .input('importePagar', sql.Decimal(13, 2), pago.importe)
           .input('cuotas', sql.TinyInt, pago.cuotas || 1)
@@ -672,8 +672,8 @@ async function CreateCambioConVenta({
         await tx.request()
           .input('guid', sql.Char(16), guidCaja)
           .input('fecha', sql.Date, todayAR())
-          .input('tipoComprobante', sql.VarChar(40), pago.descripcion || pago.tipo)
-          .input('descripcion', sql.Char(60), `Cambio - ${pago.descripcion || pago.tipo}`)
+          .input('tipoComprobante', sql.VarChar(40), (pago.descripcion || pago.tipo || '').substring(0, 40))
+          .input('descripcion', sql.VarChar(255), `Cambio - ${pago.descripcion || pago.tipo}`)
           .input('debe', sql.Decimal(13, 2), pago.importe)
           .input('haber', sql.Decimal(13, 2), 0)
           .input('guidSucursal', sql.Char(16), guidSucursal)
@@ -821,6 +821,59 @@ async function CreateCambioConVenta({
     }
 
     // ================================================================
+    // PARTE C.2: Si el cambio es mayor que la venta, dejar diferencia a favor del cliente
+    // ================================================================
+    if (diferencia < -0.01 && guidCliente && guidCliente !== EMPTY_GUID) {
+      const saldoAFavor = Math.abs(diferencia);
+      // Reducir saldo del cliente (a favor)
+      await tx.request()
+        .input('guid', sql.Char(16), guidCliente)
+        .input('importe', sql.Decimal(13, 3), saldoAFavor)
+        .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) - @importe WHERE GUID = @guid`);
+
+      // Registrar movimiento HABER (a favor)
+      const guidMovCliFavor = newGuid();
+      await tx.request()
+        .input('guid', sql.Char(16), guidMovCliFavor)
+        .input('fecha', sql.Decimal(7), dateToClarion())
+        .input('cantidad', sql.SmallInt, 0)
+        .input('articulo', sql.VarChar(255), '')
+        .input('descripcion', sql.VarChar(2000), `Cambio - Saldo a favor (diferencia $${saldoAFavor.toFixed(2)})`)
+        .input('talle', sql.Decimal(7, 2), 0)
+        .input('precioUnitario', sql.Decimal(11, 2), 0)
+        .input('iva', sql.Decimal(5, 2), 0)
+        .input('debe', sql.Decimal(13, 3), 0)
+        .input('haber', sql.Decimal(13, 3), saldoAFavor)
+        .input('saldo', sql.Decimal(13, 3), 0)
+        .input('pago', sql.Char(10), '')
+        .input('sucursal', sql.TinyInt, 0)
+        .input('guidCliente', sql.Char(16), guidCliente)
+        .input('guidArticulo', sql.Char(16), EMPTY_GUID)
+        .input('guidRemito', sql.Char(16), guidRemitoVenta)
+        .input('guidFormaPago', sql.Char(16), EMPTY_GUID)
+        .input('guidCaja', sql.Char(16), EMPTY_GUID)
+        .input('guidBanco', sql.Char(16), EMPTY_GUID)
+        .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
+        .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
+        .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
+        .input('ts', sql.Float, ts)
+        .input('sts', sql.Float, ts)
+        .input('dts', sql.Float, 0)
+        .query(`
+          INSERT INTO MovimientoClientes (GUID, FECHA, CANTIDAD, ARTICULO, DESCRIPCION, TALLE,
+            PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
+            GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
+            GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
+            GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+          VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
+            @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
+            @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
+            @guidCaja, @guidBanco, @guidMovBanco,
+            @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
+        `);
+    }
+
+    // ================================================================
     // PARTE D: Emitir Factura si corresponde (misma logica que CreateVenta)
     // ================================================================
     let facturaNumero = null;
@@ -953,6 +1006,7 @@ async function CreateCambioConVenta({
       totalCambio,
       totalVenta,
       diferencia: diferencia > 0 ? diferencia : 0,
+      saldoAFavor: diferencia < -0.01 ? Math.abs(diferencia) : 0,
       formaPago: diferencia > 0.01 ? ((pagos && pagos.length > 0) ? pagos.map(p => p.tipo).join(', ') : tipoPago) : 'Sin cobro',
       factura: facturaNumero,
     };
@@ -1046,4 +1100,100 @@ async function GetCreditoByDevolucion(guidDevolucion) {
   return result.recordset[0] || null;
 }
 
-module.exports = { CreateDevolucion, CreateCambioConVenta, GetDevolucionDetalle, GetCreditosCliente, GetCreditoByDevolucion };
+// ============================================================================
+// Listar devoluciones por fecha
+// ============================================================================
+async function GetDevoluciones({ desde, hasta, guidSucursal }) {
+  const pool = await getPool();
+  const req = pool.request();
+  let where = `(rd.dts IS NULL OR rd.dts = 0)`;
+
+  if (desde) {
+    req.input('desde', sql.Int, dateToClarion(desde));
+    where += ` AND rd.FECHA >= @desde`;
+  }
+  if (hasta) {
+    req.input('hasta', sql.Int, dateToClarion(hasta));
+    where += ` AND rd.FECHA <= @hasta`;
+  }
+  if (guidSucursal) {
+    req.input('guidSuc', sql.Char(16), guidSucursal);
+    where += ` AND rd.GUIDSUCURSALES = @guidSuc`;
+  }
+
+  const result = await req.query(`
+    SELECT rd.GUID, rd.FECHA, rd.HORA, RTRIM(rd.NOMBRE) AS NOMBRE, rd.TOTAL,
+           rd.GUIDREMITOS, RTRIM(s.NOMBRE) AS Sucursal
+    FROM RemitosDevoluciones rd
+    LEFT JOIN Sucursales s ON s.GUID = rd.GUIDSUCURSALES
+    WHERE ${where}
+    ORDER BY rd.FECHA DESC, rd.HORA DESC
+  `);
+  return result.recordset;
+}
+
+// ============================================================================
+// Listar cambios por fecha
+// ============================================================================
+async function GetCambios({ desde, hasta, guidSucursal }) {
+  const pool = await getPool();
+  const req = pool.request();
+  let where = `(rc.dts IS NULL OR rc.dts = 0)`;
+
+  if (desde) {
+    req.input('desde', sql.Int, dateToClarion(desde));
+    where += ` AND rc.FECHA >= @desde`;
+  }
+  if (hasta) {
+    req.input('hasta', sql.Int, dateToClarion(hasta));
+    where += ` AND rc.FECHA <= @hasta`;
+  }
+  if (guidSucursal) {
+    req.input('guidSuc', sql.Char(16), guidSucursal);
+    where += ` AND rc.GUIDSUCURSALES = @guidSuc`;
+  }
+
+  const result = await req.query(`
+    SELECT rc.GUID, rc.FECHA, rc.HORA, RTRIM(rc.NOMBRE) AS NOMBRE, rc.TOTAL,
+           rc.GUIDREMITOS, RTRIM(s.NOMBRE) AS Sucursal
+    FROM RemitosCambios rc
+    LEFT JOIN Sucursales s ON s.GUID = rc.GUIDSUCURSALES
+    WHERE ${where}
+    ORDER BY rc.FECHA DESC, rc.HORA DESC
+  `);
+  return result.recordset;
+}
+
+// ============================================================================
+// Detalle de un cambio
+// ============================================================================
+async function GetCambioDetalle(guidRemitoCambio) {
+  const pool = await getPool();
+
+  const cambio = await pool.request()
+    .input('guid', sql.Char(16), guidRemitoCambio)
+    .query(`
+      SELECT rc.*, RTRIM(s.NOMBRE) AS Sucursal, s.PUNTOVENTA,
+             c.NOMBRE AS ClienteNombre, c.CUIT AS ClienteCuit
+      FROM RemitosCambios rc
+      LEFT JOIN Sucursales s ON s.GUID = rc.GUIDSUCURSALES
+      LEFT JOIN Clientes c ON c.GUID = rc.GUIDCLIENTES
+      WHERE rc.GUID = @guid
+    `);
+
+  const items = await pool.request()
+    .input('guid', sql.Char(16), guidRemitoCambio)
+    .query(`
+      SELECT mr.ARTICULO, mr.DESCRIPCION, mr.NUMERO AS TALLE, mr.CANTIDAD,
+             mr.NETO AS PRECIOUNITARIO, mr.SUBTOTAL, mr.TOTAL
+      FROM MovimientoRemitos mr
+      WHERE mr.GUIDREMITOSCAMBIOS = @guid AND (mr.dts IS NULL OR mr.dts = 0)
+    `);
+
+  return {
+    cambio: cambio.recordset[0] || null,
+    items: items.recordset,
+  };
+}
+
+module.exports = { CreateDevolucion, CreateCambioConVenta, GetDevolucionDetalle, GetCambioDetalle, GetCreditosCliente, GetCreditoByDevolucion, GetDevoluciones, GetCambios };

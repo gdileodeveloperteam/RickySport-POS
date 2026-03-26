@@ -54,6 +54,10 @@ const API = (function () {
     return Request(`/clientes/${guid}`);
   }
 
+  async function UpdateClienteContacto(guid, data) {
+    return Request(`/clientes/${guid}/contacto`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
   async function GetClienteSaldo(guid) {
     return Request(`/clientes/${guid}/saldo`);
   }
@@ -171,6 +175,26 @@ const API = (function () {
   // Cambios de mercaderia (atomico: cambio + venta + cobro)
   async function CreateCambioConVenta(data) {
     return Request('/devoluciones/cambio', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async function GetDevoluciones(params) {
+    const q = new URLSearchParams();
+    if (params.desde) q.set('desde', params.desde);
+    if (params.hasta) q.set('hasta', params.hasta);
+    if (params.guidSucursal) q.set('guidSucursal', params.guidSucursal);
+    return Request(`/devoluciones?${q.toString()}`);
+  }
+
+  async function GetCambioDetalle(guid) {
+    return Request(`/devoluciones/cambios/${guid}`);
+  }
+
+  async function GetCambiosList(params) {
+    const q = new URLSearchParams();
+    if (params.desde) q.set('desde', params.desde);
+    if (params.hasta) q.set('hasta', params.hasta);
+    if (params.guidSucursal) q.set('guidSucursal', params.guidSucursal);
+    return Request(`/devoluciones/cambios?${q.toString()}`);
   }
 
   // Transferencias
@@ -306,12 +330,12 @@ const API = (function () {
   return {
     Login, GetUsuarios,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
-    GetClientes, CreateCliente, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, RecalcularSaldosClientes, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
+    GetClientes, CreateCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, RecalcularSaldosClientes, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
     GetSucursales, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
     GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,
     CreateVenta, GetVentas, GetVentaDetalle, GetFacturaDetalle, GetResumenPagos, GetVentasPorSucursal, GetTotalesDevCambios,
-    CreateDevolucion, GetDevolucionDetalle, GetCreditosCliente, GetCreditoByDevolucion, CreateCambioConVenta,
+    CreateDevolucion, GetDevolucionDetalle, GetCreditosCliente, GetCreditoByDevolucion, CreateCambioConVenta, GetDevoluciones, GetCambioDetalle, GetCambiosList,
     CreateTransferencia, GetTransferencias, GetTransferenciaDetalle,
     GetEmpleados, GetEmpleadoAdelantos, GetProveedores,
     CreateGasto, CreateAdelanto, GetGastos,

@@ -6,7 +6,7 @@ async function GetAll(guidBanco) {
   let query = `
     SELECT cpb.GUID, cpb.ID, cpb.GUIDBANCOS, cpb.GUIDCONCEPTOBANCO,
            cpb.CODIGOCONCEPTOSEGUNBANCO, cpb.DESCRIPCIONSEGUNBANCO,
-           b.BANCO AS NombreBanco, bc.DESCRIPCION AS ConceptoDescripcion
+           b.NOMBRE AS NombreBanco, bc.DESCRIPCION AS ConceptoDescripcion
     FROM ConceptosPorBanco cpb
     LEFT JOIN Bancos b ON cpb.GUIDBANCOS = b.GUID AND (b.dts IS NULL OR b.dts = 0)
     LEFT JOIN BancosConceptos bc ON cpb.GUIDCONCEPTOBANCO = bc.GUID
@@ -16,7 +16,7 @@ async function GetAll(guidBanco) {
     query += ` WHERE cpb.GUIDBANCOS = @guidBanco`;
     request.input('guidBanco', sql.Char(16), guidBanco);
   }
-  query += ` ORDER BY b.BANCO, bc.DESCRIPCION`;
+  query += ` ORDER BY b.NOMBRE, bc.DESCRIPCION`;
   const result = await request.query(query);
   return result.recordset;
 }
@@ -26,7 +26,7 @@ async function GetByGuid(guid) {
   const result = await pool.request()
     .input('guid', sql.Char(16), guid)
     .query(`
-      SELECT cpb.*, b.BANCO AS NombreBanco, bc.DESCRIPCION AS ConceptoDescripcion
+      SELECT cpb.*, b.NOMBRE AS NombreBanco, bc.DESCRIPCION AS ConceptoDescripcion
       FROM ConceptosPorBanco cpb
       LEFT JOIN Bancos b ON cpb.GUIDBANCOS = b.GUID AND (b.dts IS NULL OR b.dts = 0)
       LEFT JOIN BancosConceptos bc ON cpb.GUIDCONCEPTOBANCO = bc.GUID

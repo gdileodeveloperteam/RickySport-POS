@@ -7,7 +7,7 @@ async function GetAll(guidBanco) {
     SELECT bc.GUID, bc.ID, bc.GUIDBANCOS, bc.GUIDTIPOCUENTABANCO, bc.TIPOCUENTA,
            bc.NUMEROCUENTA, bc.CBU, bc.ALIAS, bc.DIRECCION, bc.SUCURSAL,
            bc.FECHAAPERTURA, bc.FECHACIERRE, bc.SALDOINICIAL, bc.SALDO, bc.TITULAR,
-           b.BANCO AS NombreBanco
+           b.NOMBRE AS NombreBanco
     FROM BancosCuentas bc
     LEFT JOIN Bancos b ON bc.GUIDBANCOS = b.GUID AND (b.dts IS NULL OR b.dts = 0)
   `;
@@ -26,7 +26,7 @@ async function GetByGuid(guid) {
   const result = await pool.request()
     .input('guid', sql.Char(16), guid)
     .query(`
-      SELECT bc.*, b.BANCO AS NombreBanco
+      SELECT bc.*, b.NOMBRE AS NombreBanco
       FROM BancosCuentas bc
       LEFT JOIN Bancos b ON bc.GUIDBANCOS = b.GUID AND (b.dts IS NULL OR b.dts = 0)
       WHERE bc.GUID = @guid

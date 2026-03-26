@@ -13,6 +13,14 @@ router.post('/', async (req, res, next) => {
   try { res.status(201).json(await clientesRepo.Create(req.body)); } catch (err) { next(err); }
 });
 
+router.patch('/:guid/contacto', async (req, res, next) => {
+  try {
+    const { email, celular } = req.body;
+    await clientesRepo.UpdateContacto(req.params.guid, { email, celular });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 router.post('/recalcular-saldos', async (req, res, next) => {
   try {
     const data = await clientesRepo.RecalcularSaldos();

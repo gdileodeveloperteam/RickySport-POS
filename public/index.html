@@ -169,28 +169,29 @@
           </div>
           <hr>
 
-          <!-- PASO 1: Tipo de cobro/pago → Comprobante → Plan -->
+          <!-- PASO 1: Tipo de cobro/pago → Medio de Cobro → Plan -->
           <div class="row g-2 mb-3">
-            <div class="col-md-3">
+            <div class="col-md-4">
               <label class="form-label fw-semibold">Tipo de Pago</label>
-              <select id="pagoTipo" class="form-select" onchange="POS.OnTipoPagoChange()">
+              <select id="pagoTipo" class="form-select form-select-lg" onchange="POS.OnTipoPagoChange()">
               </select>
             </div>
-            <div class="col-md-3 d-none" id="divComprobante">
-              <label class="form-label fw-semibold">Comprobante</label>
-              <select id="pagoComprobante" class="form-select" onchange="POS.OnComprobanteChange()"></select>
+            <div class="col-md-4 d-none" id="divComprobante">
+              <label class="form-label fw-semibold">Medio de Cobro</label>
+              <select id="pagoComprobante" class="form-select form-select-lg" onchange="POS.OnComprobanteChange()"></select>
+              <input type="text" id="pagoComprobanteRO" class="form-control form-control-lg" readonly style="display:none;">
             </div>
-            <div class="col-md-3 d-none" id="divCuotas">
+            <div class="col-md-4 d-none" id="divCuotas">
               <label class="form-label fw-semibold">Plan/Cuotas</label>
-              <select id="pagoPlan" class="form-select" onchange="POS.OnPlanChange()"></select>
+              <select id="pagoPlan" class="form-select form-select-lg" onchange="POS.OnPlanChange()"></select>
             </div>
-            <div class="col-md-3 d-none" id="divCreditoDevOpciones">
+            <div class="col-md-4 d-none" id="divCreditoDevOpciones">
               <label class="form-label fw-semibold">Credito disponible</label>
-              <select id="pagoCreditoDev" class="form-select"></select>
+              <select id="pagoCreditoDev" class="form-select form-select-lg"></select>
             </div>
-            <div class="col-md-3 d-none" id="divCuentaBancaria">
+            <div class="col-md-4 d-none" id="divCuentaBancaria">
               <label class="form-label fw-semibold">Cuenta Bancaria</label>
-              <select id="pagoCuentaBancaria" class="form-select"></select>
+              <select id="pagoCuentaBancaria" class="form-select form-select-lg"></select>
             </div>
           </div>
           <div id="divRecargoInfo" class="d-none mb-3"></div>
@@ -217,11 +218,11 @@
               </div>
               <div class="col-md-6">
                 <label for="tarjetaNumero" class="form-label form-label-sm mb-0">Nro. Tarjeta (ultimos 4) <span class="text-danger">*</span></label>
-                <input type="text" id="tarjetaNumero" class="form-control form-control-sm" maxlength="20" placeholder="XXXX">
+                <input type="text" id="tarjetaNumero" class="form-control form-control-sm" maxlength="4" placeholder="XXXX">
               </div>
               <div class="col-md-6">
                 <label for="tarjetaLote" class="form-label form-label-sm mb-0">Lote <span class="text-danger">*</span></label>
-                <input type="text" id="tarjetaLote" class="form-control form-control-sm">
+                <input type="number" id="tarjetaLote" class="form-control form-control-sm" min="0" max="9999" maxlength="4" oninput="if(this.value.length>4)this.value=this.value.slice(0,4)">
               </div>
               <div class="col-md-6">
                 <label for="tarjetaCuponNumero" class="form-label form-label-sm mb-0">Nro. Cupón <span class="text-danger">*</span></label>
@@ -322,7 +323,7 @@
         <div class="modal-footer justify-content-between">
           <div>
             <button class="btn btn-outline-success" id="btnAutorizarFactura" onclick="AutorizarFactura()">
-              <i class="bi bi-shield-check me-1"></i>Autorizar AFIP
+              <i class="bi bi-shield-check me-1"></i>Autorizar ARCA
             </button>
           </div>
           <div class="d-flex gap-2">

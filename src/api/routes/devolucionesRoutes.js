@@ -32,6 +32,33 @@ router.post('/cambio', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Listar devoluciones por fecha
+router.get('/', async (req, res, next) => {
+  try {
+    const { desde, hasta, guidSucursal } = req.query;
+    const data = await devolucionesRepo.GetDevoluciones({ desde, hasta, guidSucursal });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// Detalle de un cambio
+router.get('/cambios/:guid', async (req, res, next) => {
+  try {
+    const data = await devolucionesRepo.GetCambioDetalle(req.params.guid);
+    if (!data.cambio) return res.status(404).json({ error: 'Cambio no encontrado' });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// Listar cambios por fecha
+router.get('/cambios', async (req, res, next) => {
+  try {
+    const { desde, hasta, guidSucursal } = req.query;
+    const data = await devolucionesRepo.GetCambios({ desde, hasta, guidSucursal });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
 // Creditos disponibles de un cliente (DEBE ir antes de /:guid)
 router.get('/creditos/:guidCliente', async (req, res, next) => {
   try {

@@ -4,16 +4,16 @@ const { newGuid, tsNow } = require('../../utils/guidHelper');
 async function GetAll(search) {
   const pool = await getPool();
   let query = `
-    SELECT GUID, BANCO, CUENTANUMERO, DIRECCION, LOCALIDAD, TELEFONO, SALDO, TIPOCUENTA
+    SELECT GUID, NOMBRE, CUENTANUMERO, DIRECCION, LOCALIDAD, TELEFONO, SALDO, TIPOCUENTA
     FROM Bancos
     WHERE (dts IS NULL OR dts = 0)
   `;
   const request = pool.request();
   if (search) {
-    query += ` AND (BANCO LIKE @search OR CUENTANUMERO LIKE @search)`;
+    query += ` AND (NOMBRE LIKE @search OR CUENTANUMERO LIKE @search)`;
     request.input('search', sql.VarChar, `%${search}%`);
   }
-  query += ` ORDER BY BANCO`;
+  query += ` ORDER BY NOMBRE`;
   const result = await request.query(query);
   return result.recordset;
 }
@@ -26,13 +26,13 @@ async function GetByGuid(guid) {
   return result.recordset[0] || null;
 }
 
-async function Create({ banco, cuentaNumero, direccion, localidad, telefono, tipoCuenta }) {
+async function Create({ nombre, cuentaNumero, direccion, localidad, telefono, tipoCuenta }) {
   const pool = await getPool();
   const guid = newGuid();
   const ts = tsNow();
   await pool.request()
     .input('guid', sql.Char(16), guid)
-    .input('banco', sql.VarChar(255), banco)
+    .input('nombre', sql.VarChar(255), nombre)
     .input('cuentaNumero', sql.VarChar(255), cuentaNumero || null)
     .input('direccion', sql.VarChar(255), direccion || null)
     .input('localidad', sql.VarChar(255), localidad || null)
@@ -41,18 +41,18 @@ async function Create({ banco, cuentaNumero, direccion, localidad, telefono, tip
     .input('ts', sql.Float, ts)
     .input('sts', sql.Float, ts)
     .query(`
-      INSERT INTO Bancos (GUID, BANCO, CUENTANUMERO, DIRECCION, LOCALIDAD, TELEFONO, SALDO, TIPOCUENTA, ts, sts)
-      VALUES (@guid, @banco, @cuentaNumero, @direccion, @localidad, @telefono, 0, @tipoCuenta, @ts, @sts)
+      INSERT INTO Bancos (GUID, NOMBRE, CUENTANUMERO, DIRECCION, LOCALIDAD, TELEFONO, SALDO, TIPOCUENTA, ts, sts)
+      VALUES (@guid, @nombre, @cuentaNumero, @direccion, @localidad, @telefono, 0, @tipoCuenta, @ts, @sts)
     `);
   return { guid };
 }
 
-async function Update(guid, { banco, cuentaNumero, direccion, localidad, telefono, tipoCuenta }) {
+async function Update(guid, { nombre, cuentaNumero, direccion, localidad, telefono, tipoCuenta }) {
   const pool = await getPool();
   const ts = tsNow();
   await pool.request()
     .input('guid', sql.Char(16), guid)
-    .input('banco', sql.VarChar(255), banco)
+    .input('nombre', sql.VarChar(255), nombre)
     .input('cuentaNumero', sql.VarChar(255), cuentaNumero || null)
     .input('direccion', sql.VarChar(255), direccion || null)
     .input('localidad', sql.VarChar(255), localidad || null)
@@ -61,7 +61,7 @@ async function Update(guid, { banco, cuentaNumero, direccion, localidad, telefon
     .input('sts', sql.Float, ts)
     .query(`
       UPDATE Bancos
-      SET BANCO = @banco, CUENTANUMERO = @cuentaNumero, DIRECCION = @direccion,
+      SET NOMBRE = @nombre, CUENTANUMERO = @cuentaNumero, DIRECCION = @direccion,
           LOCALIDAD = @localidad, TELEFONO = @telefono, TIPOCUENTA = @tipoCuenta, sts = @sts
       WHERE GUID = @guid AND (dts IS NULL OR dts = 0)
     `);

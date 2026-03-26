@@ -3,6 +3,8 @@
    SPA vanilla JS con Bootstrap 5
    ============================================================================ */
 
+const GUID_CONSUMIDOR_FINAL = '68BKEFZLUAPRY0XN';
+
 // ── Estado global ──────────────────────────────────────────────────────────────
 const State = {
   sucursales: [],
@@ -56,12 +58,19 @@ function Debounce(fn, ms) {
 }
 
 function TodayISO() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 function Days30AgoISO() {
   const d = new Date();
   d.setDate(d.getDate() - 30);
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function GetCuentaCajaSucursal() {
@@ -335,6 +344,8 @@ const POS = {
     POS.emitirFactura = false;
     POS._modoCobroDeuda = false;
     POS._cobroDeudaData = null;
+    POS._cfEmail = null;
+    POS._cfCelular = null;
   },
 
   GetTotal() {
@@ -457,6 +468,8 @@ const POS = {
     }
     POS.pagos = [];
     POS._resetTipoPago = true;
+    POS._cfEmail = null;
+    POS._cfCelular = null;
     RenderPagosModal();
     new bootstrap.Modal(document.getElementById('modalPagos')).show();
   },
@@ -622,6 +635,7 @@ const POS = {
       if (!titular) { ShowToast('Aviso', 'Ingrese el nombre del titular de la tarjeta', 'info'); return; }
       if (!tarjNum) { ShowToast('Aviso', 'Ingrese el número de tarjeta', 'info'); return; }
       if (!lote) { ShowToast('Aviso', 'Ingrese el lote', 'info'); return; }
+      if (isNaN(lote) || parseInt(lote) > 9999 || parseInt(lote) < 0) { ShowToast('Aviso', 'El lote debe ser un numero de hasta 4 digitos', 'info'); return; }
       if (!cupon) { ShowToast('Aviso', 'Ingrese el número de cupón', 'info'); return; }
     }
 
@@ -699,6 +713,24 @@ const POS = {
 
     POS.pagos.push(pago);
     document.getElementById('pagoImporte').value = '';
+
+    // Si credito cubre todo el total (restante = 0), agregar pago EFECTIVO $0 automaticamente
+    if (esCreditoDev) {
+      const totalFinal = POS._totalConRecargo > 0 ? POS._totalConRecargo : (POS._cambioData && POS._cambioData.diferencia > 0 ? POS._cambioData.diferencia : POS.GetTotal());
+      const totalPagosActual = POS.GetTotalPagos();
+      if (Math.abs(totalFinal - totalPagosActual) < 0.01) {
+        const efectivoTipo = State.tiposCobrosPagos.find(t => (t.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO');
+        if (efectivoTipo) {
+          const cuentaCaja = GetCuentaCajaSucursal();
+          POS.pagos.push({
+            tipo: efectivoTipo.GUID.trim(), tipoNombre: 'EFECTIVO', importe: 0, descripcion: 'EFECTIVO',
+            guidBanco: cuentaCaja ? (cuentaCaja.GUIDBANCOS || '').trim() : '',
+            guidBancosCuentas: cuentaCaja ? cuentaCaja.GUID.trim() : '',
+            _esEfectivo: true, _esCtaCte: false, _esCreditoDev: false, _esCheque3ro: false, _esTarjeta: false,
+          });
+        }
+      }
+    }
 
     // Si el pago requiere factura, activarla automáticamente
     if (!esEfectivo && !esCtaCte && !esCreditoDev) {
@@ -840,7 +872,7 @@ const POS = {
 
     try {
       const data = {
-        guidCliente: POS.cliente ? POS.cliente.GUID : null,
+        guidCliente: POS.cliente ? POS.cliente.GUID : GUID_CONSUMIDOR_FINAL,
         guidSucursal: State.sucursalActual,
         guidVendedor: POS.vendedor || null,
         guidUsuario: (State.usuario && State.usuario.GUID) || '',
@@ -850,6 +882,8 @@ const POS = {
         items: POS.items,
         pagos: POS.pagos,
         emitirFactura: POS.emitirFactura,
+        emailContacto: POS.cliente ? (POS.cliente.EMAIL || '').trim() : (POS._cfEmail || ''),
+        celularContacto: POS.cliente ? (POS.cliente.CELULAR || '').trim() : (POS._cfCelular || ''),
       };
       const result = await API.CreateVenta(data);
       bootstrap.Modal.getInstance(document.getElementById('modalPagos')).hide();
@@ -874,6 +908,12 @@ const POS = {
   },
 
   SeleccionarCliente(cliente) {
+    if (ClienteRequiereContacto(cliente)) {
+      MostrarFormContactoCliente(cliente, (cliActualizado) => {
+        POS.SeleccionarCliente(cliActualizado);
+      });
+      return;
+    }
     POS.cliente = cliente;
     bootstrap.Modal.getInstance(document.getElementById('modalCliente')).hide();
     const el = document.getElementById('posClienteInfo');
@@ -881,11 +921,12 @@ const POS = {
       el.innerHTML = `
         <span class="badge bg-primary badge-lg me-2"><i class="bi bi-person-fill me-1"></i>${(cliente.NOMBRE || '').trim()}</span>
         <small class="text-muted">CUIT: ${(cliente.CUIT || '').trim()} | Saldo: ${FormatMoney(cliente.SALDO)}</small>
-        <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>';">
+        <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>'; ToggleTitularTarjeta();">
           <i class="bi bi-x"></i>
         </button>
       `;
     }
+    ToggleTitularTarjeta();
   },
 };
 
@@ -1239,6 +1280,7 @@ async function RenderPagosModal() {
       const mov = (t.TIPOMOVIMIENTO || '').trim();
       if (mov === 'E') return false;
       if (esCobroDeuda && mov === 'X') return false; // Excluir CTACTE en cobro de deuda
+      if (esCobroDeuda && t.TIPO === 9) return false; // Excluir Credito Devoluciones en cobro de deuda
       return true;
     })
     .forEach(t => {
@@ -1247,7 +1289,15 @@ async function RenderPagosModal() {
       opt.textContent = (t.DESCRIPCION || '').trim();
       sel.appendChild(opt);
     });
-  if (prevTipo && sel.querySelector(`option[value="${prevTipo}"]`)) sel.value = prevTipo;
+  if (prevTipo && sel.querySelector(`option[value="${prevTipo}"]`)) {
+    sel.value = prevTipo;
+  } else {
+    // Por defecto seleccionar EFECTIVO
+    const efectivoOpt = State.tiposCobrosPagos.find(t => (t.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO');
+    if (efectivoOpt && sel.querySelector(`option[value="${efectivoOpt.GUID.trim()}"]`)) {
+      sel.value = efectivoOpt.GUID.trim();
+    }
+  }
 
   const tipoSel = GetTipoCobroPagoSel();
   const tipoMov = tipoSel ? (tipoSel.TIPOMOVIMIENTO || '').trim() : '';
@@ -1262,9 +1312,23 @@ async function RenderPagosModal() {
   const selComp = document.getElementById('pagoComprobante');
   const prevComp = selComp.value;
   const comprobantes = tipoNum !== null ? State.tcPagos.filter(t => t.TIPO === tipoNum) : [];
+  const roComp = document.getElementById('pagoComprobanteRO');
   if (comprobantes.length > 0) {
     divComp.classList.remove('d-none');
-    if (comprobantes.length === 1) {
+    if (comprobantes.length === 1 && comprobantes[0].CANTPLANES === 0) {
+      // Unico comprobante sin planes: mostrar como readonly
+      selComp.style.display = 'none';
+      selComp.innerHTML = '';
+      const opt = document.createElement('option');
+      opt.value = comprobantes[0].GUID.trim();
+      opt.textContent = (comprobantes[0].TIPO_COMPROBANTE || '').trim();
+      selComp.appendChild(opt);
+      selComp.value = opt.value;
+      roComp.value = (comprobantes[0].TIPO_COMPROBANTE || '').trim();
+      roComp.style.display = '';
+    } else if (comprobantes.length === 1) {
+      selComp.style.display = '';
+      roComp.style.display = 'none';
       selComp.innerHTML = '';
       const opt = document.createElement('option');
       opt.value = comprobantes[0].GUID.trim();
@@ -1272,6 +1336,8 @@ async function RenderPagosModal() {
       selComp.appendChild(opt);
       selComp.value = opt.value;
     } else {
+      selComp.style.display = '';
+      roComp.style.display = 'none';
       selComp.innerHTML = '<option value="">Seleccione...</option>';
       comprobantes.forEach(tc => {
         const opt = document.createElement('option');
@@ -1284,6 +1350,8 @@ async function RenderPagosModal() {
   } else {
     divComp.classList.add('d-none');
     selComp.innerHTML = '';
+    selComp.style.display = '';
+    roComp.style.display = 'none';
   }
 
   // ── 3. Planes del comprobante seleccionado ──
@@ -1507,13 +1575,34 @@ async function RenderPagosModal() {
         </div>
       `;
     } else {
+      const sucActual = State.sucursales.find(s => s.GUID === State.sucursalActual);
+      const cfEmail = POS._cfEmail || (sucActual ? (sucActual.EMAIL || '').trim() : '');
+      const cfCelular = POS._cfCelular || (sucActual ? (sucActual.CELULAR || '').trim() : '');
+      if (!POS._cfEmail) POS._cfEmail = cfEmail;
+      if (!POS._cfCelular) POS._cfCelular = cfCelular;
       zonaCliente.innerHTML = `
-        <div class="d-flex align-items-center gap-2 mb-0">
-          <span class="fw-semibold">Cliente:</span>
-          <em class="text-muted">Consumidor Final</em>
-          <button class="btn btn-sm btn-outline-primary" onclick="AbrirModalClientePago()">
-            <i class="bi bi-person-plus me-1"></i>Seleccionar
-          </button>
+        <div class="mb-0">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="fw-semibold">Cliente:</span>
+            <em class="text-muted">Consumidor Final</em>
+            <button class="btn btn-sm btn-outline-primary" onclick="AbrirModalClientePago()">
+              <i class="bi bi-person-plus me-1"></i>Seleccionar
+            </button>
+          </div>
+          <div class="row g-2">
+            <div class="col-md-5">
+              <div class="input-group input-group-sm">
+                <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                <input type="email" class="form-control" id="cfEmail" value="${cfEmail}" placeholder="Email para comprobante" onchange="POS._cfEmail=this.value.trim()">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="input-group input-group-sm">
+                <span class="input-group-text"><i class="bi bi-phone"></i></span>
+                <input type="text" class="form-control" id="cfCelular" value="${cfCelular}" placeholder="Celular" onchange="POS._cfCelular=this.value.trim()">
+              </div>
+            </div>
+          </div>
         </div>
       `;
     }
@@ -1690,6 +1779,12 @@ function AbrirModalClientePago() {
 }
 
 function SeleccionarClienteDesdeModal(cliente) {
+  if (ClienteRequiereContacto(cliente)) {
+    MostrarFormContactoCliente(cliente, (cliActualizado) => {
+      SeleccionarClienteDesdeModal(cliActualizado);
+    });
+    return;
+  }
   POS.cliente = cliente;
   bootstrap.Modal.getInstance(document.getElementById('modalCliente')).hide();
 
@@ -1699,11 +1794,12 @@ function SeleccionarClienteDesdeModal(cliente) {
     elPOS.innerHTML = `
       <span class="badge bg-primary badge-lg me-2"><i class="bi bi-person-fill me-1"></i>${(cliente.NOMBRE || '').trim()}</span>
       <small class="text-muted">CUIT: ${(cliente.CUIT || '').trim()} | Saldo: ${FormatMoney(cliente.SALDO)}</small>
-      <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>';">
+      <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>'; ToggleTitularTarjeta();">
         <i class="bi bi-x"></i>
       </button>
     `;
   }
+  ToggleTitularTarjeta();
 
   if (window._clienteCallbackPago) {
     window._clienteCallbackPago = false;
@@ -1715,6 +1811,66 @@ function SeleccionarClienteDesdeModal(cliente) {
       new bootstrap.Modal(document.getElementById('modalPagos')).show();
     }, 300);
   }
+}
+
+// ── Validacion contacto obligatorio ──────────────────────────────────────────
+function ClienteRequiereContacto(cliente) {
+  const email = (cliente.EMAIL || '').trim();
+  const celular = (cliente.CELULAR || '').trim();
+  return !email || !celular;
+}
+
+function MostrarFormContactoCliente(cliente, onComplete) {
+  const email = (cliente.EMAIL || '').trim();
+  const celular = (cliente.CELULAR || '').trim();
+  const nombre = (cliente.NOMBRE || '').trim();
+
+  const lista = document.getElementById('listaClientes');
+  lista.innerHTML = `
+    <div class="card border-warning mb-2">
+      <div class="card-header bg-warning text-dark py-2">
+        <i class="bi bi-exclamation-triangle me-1"></i>Datos de contacto obligatorios para <strong>${nombre}</strong>
+      </div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label">Email <span class="text-danger">*</span></label>
+            <input type="email" class="form-control" id="ccEmail" value="${email}" placeholder="nombre@ejemplo.com" maxlength="255">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Celular <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="ccCelular" value="${celular}" placeholder="Min. 10 digitos" maxlength="20">
+          </div>
+        </div>
+        <div class="mt-2 d-flex gap-2">
+          <button class="btn btn-success btn-sm" id="btnGuardarContacto"><i class="bi bi-check-circle me-1"></i>Guardar y continuar</button>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('listaClientes').innerHTML = '';">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btnGuardarContacto').onclick = async () => {
+    const newEmail = document.getElementById('ccEmail').value.trim();
+    const newCelular = document.getElementById('ccCelular').value.trim();
+
+    if (!newEmail || !ValidarEmail(newEmail)) {
+      ShowToast('Error', 'Ingrese un email valido', 'error'); return;
+    }
+    if (!newCelular || !ValidarCelular(newCelular)) {
+      ShowToast('Error', 'Ingrese un celular valido (min. 10 digitos)', 'error'); return;
+    }
+
+    try {
+      await API.UpdateClienteContacto(cliente.GUID, { email: newEmail, celular: newCelular });
+      cliente.EMAIL = newEmail;
+      cliente.CELULAR = newCelular;
+      ShowToast('Cliente', 'Datos de contacto actualizados', 'success');
+      onComplete(cliente);
+    } catch (err) {
+      ShowToast('Error', err.message, 'error');
+    }
+  };
 }
 
 // ── Modal Cliente ──────────────────────────────────────────────────────────────
@@ -1787,14 +1943,14 @@ function ToggleFormNuevoCliente() {
             <input type="text" class="form-control" id="ncDireccion" maxlength="255">
           </div>
           <div class="col-md-4">
-            <label class="form-label">Email</label>
-            <input type="email" class="form-control" id="ncEmail" maxlength="255" placeholder="nombre@ejemplo.com">
+            <label class="form-label">Email <span class="text-danger">*</span></label>
+            <input type="email" class="form-control" id="ncEmail" maxlength="255" placeholder="nombre@ejemplo.com" required>
           </div>
         </div>
         <div class="row g-2 mt-1">
           <div class="col-md-4">
-            <label class="form-label">Celular</label>
-            <input type="text" class="form-control" id="ncCelular" placeholder="Min. 10 d&iacute;gitos" maxlength="20">
+            <label class="form-label">Celular <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="ncCelular" placeholder="Min. 10 d&iacute;gitos" maxlength="20" required>
           </div>
           <div class="col-md-8 d-flex align-items-end gap-2">
             <button class="btn btn-success" onclick="GuardarNuevoCliente()"><i class="bi bi-check-circle me-1"></i>Guardar Cliente</button>
@@ -1866,11 +2022,17 @@ async function GuardarNuevoCliente() {
     ShowToast('Error', 'CUIT inv\u00e1lido. Formato: 99-99999999-9', 'error'); return;
   }
 
-  if (email && !ValidarEmail(email)) {
+  if (!email) {
+    ShowToast('Error', 'El email es obligatorio', 'error'); return;
+  }
+  if (!ValidarEmail(email)) {
     ShowToast('Error', 'Email inv\u00e1lido', 'error'); return;
   }
 
-  if (celular && !ValidarCelular(celular)) {
+  if (!celular) {
+    ShowToast('Error', 'El celular es obligatorio', 'error'); return;
+  }
+  if (!ValidarCelular(celular)) {
     ShowToast('Error', 'Celular inv\u00e1lido. M\u00ednimo 10 d\u00edgitos num\u00e9ricos', 'error'); return;
   }
 
@@ -2028,7 +2190,7 @@ async function MostrarFactura(guidFactura) {
 }
 
 function AutorizarFactura() {
-  ShowToast('Autorizar AFIP', 'Funcionalidad pendiente de implementar', 'info');
+  ShowToast('Autorizar ARCA', 'Funcionalidad pendiente de implementar', 'info');
 }
 
 function EnviarFacturaWhatsApp() {
@@ -2433,26 +2595,54 @@ function RenderDevoluciones(container) {
   container.innerHTML = `
     <div class="fade-in">
       <h4 class="mb-3"><i class="bi bi-arrow-return-left me-2"></i>Devoluciones</h4>
-      <div class="card shadow-sm mb-3">
-        <div class="card-body">
-          <h6>Buscar venta original</h6>
-          <div class="row g-2 align-items-end">
-            <div class="col-md-3">
-              <label class="form-label">Desde</label>
-              <input type="date" id="devDesde" class="form-control" value="${Days30AgoISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">Hasta</label>
-              <input type="date" id="devHasta" class="form-control" value="${TodayISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
-            </div>
-            <div class="col-md-3">
-              <button class="btn btn-primary w-100" onclick="BuscarVentasParaDev()"><i class="bi bi-search me-1"></i>Buscar Ventas</button>
+      <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabNuevaDev">Nueva Devolucion</a></li>
+        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabMovDev">Movimientos</a></li>
+      </ul>
+      <div class="tab-content">
+        <div class="tab-pane fade show active" id="tabNuevaDev">
+          <div class="card shadow-sm mb-3">
+            <div class="card-body">
+              <h6>Buscar venta original</h6>
+              <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                  <label class="form-label">Desde</label>
+                  <input type="date" id="devDesde" class="form-control" value="${Days30AgoISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">Hasta</label>
+                  <input type="date" id="devHasta" class="form-control" value="${TodayISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <button class="btn btn-primary w-100" onclick="BuscarVentasParaDev()"><i class="bi bi-search me-1"></i>Buscar Ventas</button>
+                </div>
+              </div>
             </div>
           </div>
+          <div id="devVentasLista"></div>
+          <div id="devFormulario" class="d-none"></div>
+        </div>
+        <div class="tab-pane fade" id="tabMovDev">
+          <div class="card shadow-sm mb-3">
+            <div class="card-body">
+              <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                  <label class="form-label">Desde</label>
+                  <input type="date" id="movDevDesde" class="form-control" value="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">Hasta</label>
+                  <input type="date" id="movDevHasta" class="form-control" value="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <button class="btn btn-primary w-100" onclick="BuscarMovDevoluciones()"><i class="bi bi-search me-1"></i>Buscar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="movDevResultado"></div>
         </div>
       </div>
-      <div id="devVentasLista"></div>
-      <div id="devFormulario" class="d-none"></div>
     </div>
   `;
   BuscarVentasParaDev();
@@ -2495,6 +2685,93 @@ async function BuscarVentasParaDev() {
     `;
   } catch (err) {
     div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+async function BuscarMovDevoluciones() {
+  const desde = document.getElementById('movDevDesde').value;
+  const hasta = document.getElementById('movDevHasta').value;
+  const div = document.getElementById('movDevResultado');
+  div.innerHTML = '<div class="text-center py-3"><div class="spinner-border"></div></div>';
+  try {
+    const data = await API.GetDevoluciones({ desde, hasta, guidSucursal: State.sucursalActual });
+    if (data.length === 0) {
+      div.innerHTML = '<div class="alert alert-info">No se encontraron devoluciones para esta fecha.</div>';
+      return;
+    }
+    const totalDev = data.reduce((sum, d) => sum + (d.TOTAL || 0), 0);
+    div.innerHTML = `
+      <div class="alert alert-light border mb-3 d-flex justify-content-between align-items-center">
+        <span><strong>${data.length}</strong> devolucion${data.length !== 1 ? 'es' : ''}</span>
+        <span class="fw-bold text-danger">Total: ${FormatMoney(totalDev)}</span>
+      </div>
+      <div class="card shadow-sm">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead class="table-light">
+              <tr><th>Fecha</th><th>Hora</th><th>Cliente</th><th class="text-end">Total</th><th></th></tr>
+            </thead>
+            <tbody>
+              ${data.map((d, idx) => `
+                <tr id="movDevRow${idx}">
+                  <td>${FormatFechaInt(d.FECHA)}</td>
+                  <td>${FormatHoraInt(d.HORA)}</td>
+                  <td>${(d.NOMBRE || 'Consumidor Final').trim()}</td>
+                  <td class="text-end fw-bold">${FormatMoney(d.TOTAL)}</td>
+                  <td><button class="btn btn-sm btn-outline-info" onclick="VerDetalleDevolucion('${d.GUID}','movDevRow${idx}')"><i class="bi bi-eye"></i></button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+async function VerDetalleDevolucion(guid, rowId) {
+  const row = document.getElementById(rowId);
+  const existing = row.nextElementSibling;
+  if (existing && existing.classList.contains('detalle-row')) {
+    existing.remove();
+    return;
+  }
+  try {
+    const det = await API.GetDevolucionDetalle(guid);
+    const d = det.devolucion;
+    const items = det.items || [];
+    const credito = det.credito;
+    const tr = document.createElement('tr');
+    tr.classList.add('detalle-row');
+    tr.innerHTML = `<td colspan="5" class="p-0">
+      <div class="bg-light p-3 border-top">
+        <div class="row mb-2">
+          <div class="col-md-4"><small class="text-muted">Sucursal:</small> <strong>${d.Sucursal || '-'}</strong></div>
+          <div class="col-md-4"><small class="text-muted">Tipo:</small> <strong>${(d.TIPOOPERACION || '').trim()}</strong></div>
+          ${credito ? `<div class="col-md-4"><small class="text-muted">Credito:</small> <strong class="text-success">${FormatMoney(credito.MONTODISPONIBLE)} disponible</strong></div>` : ''}
+        </div>
+        <table class="table table-sm table-bordered mb-0">
+          <thead><tr><th>Codigo</th><th>Descripcion</th><th>Talle</th><th class="text-center">Cant.</th><th class="text-end">P.Unit.</th><th class="text-end">Subtotal</th></tr></thead>
+          <tbody>
+            ${items.map(it => `
+              <tr>
+                <td><code>${(it.ARTICULO || '').trim()}</code></td>
+                <td>${(it.DESCRIPCION || '').trim()}</td>
+                <td>${it.TALLE || '-'}</td>
+                <td class="text-center">${it.CANTIDAD}</td>
+                <td class="text-end">${FormatMoney(it.PRECIOUNITARIO)}</td>
+                <td class="text-end">${FormatMoney(it.TOTAL)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </td>`;
+    row.after(tr);
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
   }
 }
 
@@ -2621,6 +2898,12 @@ function InitClienteSelectorEvents(idPrefix) {
 }
 
 function SeleccionarClienteDevCambio(idPrefix, cliente) {
+  if (ClienteRequiereContacto(cliente)) {
+    MostrarFormContactoCliente(cliente, (cliActualizado) => {
+      SeleccionarClienteDevCambio(idPrefix, cliActualizado);
+    });
+    return;
+  }
   _devCambioCliente = cliente;
   document.getElementById(`${idPrefix}ListaClientes`).innerHTML = '';
   document.getElementById(`${idPrefix}BuscarCliente`).closest('.input-group').classList.add('d-none');
@@ -3014,26 +3297,54 @@ function RenderCambios(container) {
   container.innerHTML = `
     <div class="fade-in">
       <h4 class="mb-3"><i class="bi bi-arrow-repeat me-2"></i>Cambios de Mercaderia</h4>
-      <div class="card shadow-sm mb-3">
-        <div class="card-body">
-          <h6>Buscar venta original</h6>
-          <div class="row g-2 align-items-end">
-            <div class="col-md-3">
-              <label class="form-label">Desde</label>
-              <input type="date" id="cambDesde" class="form-control" value="${Days30AgoISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">Hasta</label>
-              <input type="date" id="cambHasta" class="form-control" value="${TodayISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
-            </div>
-            <div class="col-md-3">
-              <button class="btn btn-primary w-100" onclick="BuscarVentasParaCambio()"><i class="bi bi-search me-1"></i>Buscar Ventas</button>
+      <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabNuevoCambio">Nuevo Cambio</a></li>
+        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabMovCamb">Movimientos</a></li>
+      </ul>
+      <div class="tab-content">
+        <div class="tab-pane fade show active" id="tabNuevoCambio">
+          <div class="card shadow-sm mb-3">
+            <div class="card-body">
+              <h6>Buscar venta original</h6>
+              <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                  <label class="form-label">Desde</label>
+                  <input type="date" id="cambDesde" class="form-control" value="${Days30AgoISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">Hasta</label>
+                  <input type="date" id="cambHasta" class="form-control" value="${TodayISO()}" min="${Days30AgoISO()}" max="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <button class="btn btn-primary w-100" onclick="BuscarVentasParaCambio()"><i class="bi bi-search me-1"></i>Buscar Ventas</button>
+                </div>
+              </div>
             </div>
           </div>
+          <div id="cambVentasLista"></div>
+          <div id="cambFormulario" class="d-none"></div>
+        </div>
+        <div class="tab-pane fade" id="tabMovCamb">
+          <div class="card shadow-sm mb-3">
+            <div class="card-body">
+              <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                  <label class="form-label">Desde</label>
+                  <input type="date" id="movCambDesde" class="form-control" value="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">Hasta</label>
+                  <input type="date" id="movCambHasta" class="form-control" value="${TodayISO()}">
+                </div>
+                <div class="col-md-3">
+                  <button class="btn btn-primary w-100" onclick="BuscarMovCambios()"><i class="bi bi-search me-1"></i>Buscar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="movCambResultado"></div>
         </div>
       </div>
-      <div id="cambVentasLista"></div>
-      <div id="cambFormulario" class="d-none"></div>
     </div>
   `;
   BuscarVentasParaCambio();
@@ -3076,6 +3387,91 @@ async function BuscarVentasParaCambio() {
     `;
   } catch (err) {
     div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+async function BuscarMovCambios() {
+  const desde = document.getElementById('movCambDesde').value;
+  const hasta = document.getElementById('movCambHasta').value;
+  const div = document.getElementById('movCambResultado');
+  div.innerHTML = '<div class="text-center py-3"><div class="spinner-border"></div></div>';
+  try {
+    const data = await API.GetCambiosList({ desde, hasta, guidSucursal: State.sucursalActual });
+    if (data.length === 0) {
+      div.innerHTML = '<div class="alert alert-info">No se encontraron cambios para esta fecha.</div>';
+      return;
+    }
+    const totalCamb = data.reduce((sum, d) => sum + (d.TOTAL || 0), 0);
+    div.innerHTML = `
+      <div class="alert alert-light border mb-3 d-flex justify-content-between align-items-center">
+        <span><strong>${data.length}</strong> cambio${data.length !== 1 ? 's' : ''}</span>
+        <span class="fw-bold text-warning">Total: ${FormatMoney(totalCamb)}</span>
+      </div>
+      <div class="card shadow-sm">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead class="table-light">
+              <tr><th>Fecha</th><th>Hora</th><th>Cliente</th><th class="text-end">Total</th><th></th></tr>
+            </thead>
+            <tbody>
+              ${data.map((d, idx) => `
+                <tr id="movCambRow${idx}">
+                  <td>${FormatFechaInt(d.FECHA)}</td>
+                  <td>${FormatHoraInt(d.HORA)}</td>
+                  <td>${(d.NOMBRE || 'Consumidor Final').trim()}</td>
+                  <td class="text-end fw-bold">${FormatMoney(d.TOTAL)}</td>
+                  <td><button class="btn btn-sm btn-outline-info" onclick="VerDetalleCambio('${d.GUID}','movCambRow${idx}')"><i class="bi bi-eye"></i></button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+async function VerDetalleCambio(guid, rowId) {
+  const row = document.getElementById(rowId);
+  const existing = row.nextElementSibling;
+  if (existing && existing.classList.contains('detalle-row')) {
+    existing.remove();
+    return;
+  }
+  try {
+    const det = await API.GetCambioDetalle(guid);
+    const d = det.cambio;
+    const items = det.items || [];
+    const tr = document.createElement('tr');
+    tr.classList.add('detalle-row');
+    tr.innerHTML = `<td colspan="5" class="p-0">
+      <div class="bg-light p-3 border-top">
+        <div class="row mb-2">
+          <div class="col-md-6"><small class="text-muted">Sucursal:</small> <strong>${d ? (d.Sucursal || '-') : '-'}</strong></div>
+          <div class="col-md-6"><small class="text-muted">Tipo:</small> <strong>${d ? (d.TIPOOPERACION || '').trim() : '-'}</strong></div>
+        </div>
+        <table class="table table-sm table-bordered mb-0">
+          <thead><tr><th>Codigo</th><th>Descripcion</th><th>Talle</th><th class="text-center">Cant.</th><th class="text-end">P.Unit.</th><th class="text-end">Subtotal</th></tr></thead>
+          <tbody>
+            ${items.map(it => `
+              <tr>
+                <td><code>${(it.ARTICULO || '').trim()}</code></td>
+                <td>${(it.DESCRIPCION || '').trim()}</td>
+                <td>${it.TALLE || '-'}</td>
+                <td class="text-center">${it.CANTIDAD}</td>
+                <td class="text-end">${FormatMoney(it.PRECIOUNITARIO)}</td>
+                <td class="text-end">${FormatMoney(it.TOTAL)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </td>`;
+    row.after(tr);
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
   }
 }
 
@@ -3336,9 +3732,10 @@ async function ConfirmarCambioConVenta() {
     delete POS._cambioData;
     _devCambioCliente = null;
     const msgDif = result.diferencia > 0 ? ` | Diferencia cobrada: ${FormatMoney(result.diferencia)}` : '';
+    const msgFavor = result.saldoAFavor > 0 ? ` | Saldo a favor: ${FormatMoney(result.saldoAFavor)}` : '';
     const msgFac = result.factura ? ` | Factura: ${result.factura}` : '';
     ShowToast('Cambio exitoso',
-      `Cambio: ${FormatMoney(result.totalCambio)} | Nueva venta: ${FormatMoney(result.totalVenta)}${msgDif}${msgFac} | Pago: ${result.formaPago}`,
+      `Cambio: ${FormatMoney(result.totalCambio)} | Nueva venta: ${FormatMoney(result.totalVenta)}${msgDif}${msgFavor}${msgFac} | Pago: ${result.formaPago}`,
       'success');
     POS.Reset();
     RenderPOS(document.getElementById('mainContent'));
@@ -3660,12 +4057,13 @@ async function VerDetalleTransferencia(guid) {
       <h6>Detalle de Transferencia</h6>
       <table class="table table-sm">
         <thead class="table-light">
-          <tr><th>Código</th><th>Talle</th><th>Color</th><th class="text-center">Cantidad</th><th>Origen</th><th>Destino</th></tr>
+          <tr><th>Código</th><th>Descripción</th><th>Talle</th><th>Color</th><th class="text-center">Cantidad</th><th>Origen</th><th>Destino</th></tr>
         </thead>
         <tbody>
           ${items.map(i => `
             <tr>
-              <td><code>${(i.CODIGOARTICULO || '').trim()}</code></td>
+              <td><code>${(i.CodigoArticuloRel || '').trim()}</code></td>
+              <td>${(i.Descripcion || '').trim() || '-'}</td>
               <td>${i.NUMERO || '-'}</td>
               <td>${(i.COLOR || '').trim() || '-'}</td>
               <td class="text-center">${i.EGRESO}</td>
@@ -3688,7 +4086,8 @@ async function VerDetalleTransferencia(guid) {
 // ============================================================================
 
 function RenderGastos(container) {
-  const mesActual = new Date().toISOString().slice(0, 7);
+  const now = new Date();
+  const mesActual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   container.innerHTML = `
     <div class="fade-in">
       <h4 class="mb-3"><i class="bi bi-cash-coin me-2"></i>Gastos y Retiros</h4>
@@ -4088,8 +4487,7 @@ const Compra = {
   },
 
   AgregarItem(art, mov) {
-    const precioInput = document.getElementById('compraPrecio');
-    const precio = parseFloat(precioInput ? precioInput.value : 0) || art.PRECIOCOSTO || 0;
+    const precio = art.PRECIOCOSTO || 0;
     Compra.items.push({
       guidArticulo: art.GUID,
       guidMovimientoArticulo: mov ? mov.GUID : '',
@@ -4121,7 +4519,7 @@ async function RenderCompras(container) {
       <h4 class="mb-3"><i class="bi bi-truck me-2"></i>Compras</h4>
 
       <ul class="nav nav-tabs mb-3" role="tablist">
-        <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabNuevaCompra">Nueva Compra</a></li>
+        <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabNuevaCompra">Recepcion de Mercaderia</a></li>
         <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabHistCompras">Historial</a></li>
       </ul>
 
@@ -4133,10 +4531,7 @@ async function RenderCompras(container) {
               <div class="row g-3 mb-3">
                 <div class="col-md-6">
                   <label class="form-label fw-semibold">Proveedor <span class="text-danger">*</span></label>
-                  <div class="input-group">
-                    <input type="text" id="compraProvSearch" class="form-control" placeholder="Buscar proveedor por nombre o CUIT...">
-                    <button class="btn btn-outline-primary" onclick="BuscarProveedoresCompra()"><i class="bi bi-search"></i></button>
-                  </div>
+                  <input type="text" id="compraProvSearch" class="form-control" placeholder="Buscar proveedor por nombre o CUIT..." oninput="BuscarProveedoresCompraDebounced()">
                   <div id="compraProvLista" class="mt-1"></div>
                   <div id="compraProvSeleccionado" class="mt-2"></div>
                 </div>
@@ -4148,19 +4543,13 @@ async function RenderCompras(container) {
 
               <!-- Articulos -->
               <div class="row g-2 mb-3">
-                <div class="col-md-8">
+                <div class="col">
                   <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-upc-scan"></i></span>
                     <input type="text" id="compraSearch" class="form-control" placeholder="Escanear o buscar articulo...">
                     <button class="btn btn-primary" onclick="Compra.BuscarArticulo(document.getElementById('compraSearch').value.trim())">
                       <i class="bi bi-plus-circle"></i> Agregar
                     </button>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="input-group">
-                    <span class="input-group-text">$ Costo</span>
-                    <input type="number" id="compraPrecio" class="form-control" step="0.01" min="0" placeholder="Precio costo">
                   </div>
                 </div>
               </div>
@@ -4303,9 +4692,15 @@ function RenderCompraItems() {
   }
 }
 
+let _compraProvTimer = null;
+function BuscarProveedoresCompraDebounced() {
+  clearTimeout(_compraProvTimer);
+  _compraProvTimer = setTimeout(BuscarProveedoresCompra, 300);
+}
+
 async function BuscarProveedoresCompra() {
   const texto = (document.getElementById('compraProvSearch').value || '').trim();
-  if (!texto) return;
+  if (!texto) { document.getElementById('compraProvLista').innerHTML = ''; return; }
   try {
     const sucActual = State.sucursales.find(s => s.GUID === State.sucursalActual);
     const guidConfig = sucActual ? (sucActual.GUIDCONFIGURACION || '').trim() : '';
@@ -4517,7 +4912,7 @@ async function BuscarClientes() {
 async function VerMovimientosCliente(guid, nombre) {
   const hoy = TodayISO();
   const d30 = new Date(); d30.setDate(d30.getDate() - 30);
-  const hace30dias = d30.toISOString().slice(0, 10);
+  const hace30dias = `${d30.getFullYear()}-${String(d30.getMonth() + 1).padStart(2, '0')}-${String(d30.getDate()).padStart(2, '0')}`;
   const body = document.getElementById('detalleVentaBody');
   document.querySelector('#modalDetalleVenta .modal-title').innerHTML = `<i class="bi bi-person me-2"></i>${nombre}`;
   body.innerHTML = `
@@ -4828,7 +5223,7 @@ async function CargarComprobantesCliente(guid) {
     if (facts.length === 0) {
       divComp.innerHTML = '<div class="alert alert-info py-2">Sin comprobantes en el periodo.</div>';
     } else {
-      divComp.innerHTML = `<table class="table table-sm table-hover"><thead class="table-light"><tr><th>Numero</th><th>Tipo</th><th>Fecha</th><th class="text-end">Total</th><th>AFIP</th><th></th></tr></thead><tbody>
+      divComp.innerHTML = `<table class="table table-sm table-hover"><thead class="table-light"><tr><th>Numero</th><th>Tipo</th><th>Fecha</th><th class="text-end">Total</th><th>ARCA</th><th></th></tr></thead><tbody>
         ${facts.map(f => {
           const tipo = (f.TIPO_COMPROBANTE || '').trim();
           const cae = (f.CAE || '').trim();
@@ -5367,12 +5762,12 @@ async function LoadBancos() {
       <div id="formBancoContainer"></div>
       <table class="table table-sm table-hover">
         <thead class="table-light">
-          <tr><th>Banco</th><th>Cuenta N&ordm;</th><th>Tipo Cuenta</th><th>Direcci&oacute;n</th><th>Localidad</th><th>Tel&eacute;fono</th><th class="text-end">Saldo</th><th></th></tr>
+          <tr><th>Nombre</th><th>Cuenta N&ordm;</th><th>Tipo Cuenta</th><th>Direcci&oacute;n</th><th>Localidad</th><th>Tel&eacute;fono</th><th class="text-end">Saldo</th><th></th></tr>
         </thead>
         <tbody>
           ${bancos.map(b => `
             <tr>
-              <td>${(b.BANCO || '').trim()}</td>
+              <td>${(b.NOMBRE || '').trim()}</td>
               <td>${(b.CUENTANUMERO || '').trim()}</td>
               <td>${(b.TIPOCUENTA || '').trim()}</td>
               <td>${(b.DIRECCION || '').trim()}</td>
@@ -5393,7 +5788,7 @@ async function LoadBancos() {
 
 async function ShowFormBanco(guid) {
   const container = document.getElementById('formBancoContainer');
-  let data = { BANCO: '', CUENTANUMERO: '', TIPOCUENTA: '', DIRECCION: '', LOCALIDAD: '', TELEFONO: '' };
+  let data = { NOMBRE: '', CUENTANUMERO: '', TIPOCUENTA: '', DIRECCION: '', LOCALIDAD: '', TELEFONO: '' };
   if (guid) {
     try { data = await API.GetBancoByGuid(guid); } catch (e) { ShowToast('Error', e.message, 'error'); return; }
   }
@@ -5402,7 +5797,7 @@ async function ShowFormBanco(guid) {
       <div class="card-body">
         <h6>${guid ? 'Editar' : 'Nuevo'} Banco</h6>
         <div class="row g-2">
-          <div class="col-md-3"><label class="form-label">Banco</label><input type="text" class="form-control" id="fBanco" value="${(data.BANCO || '').trim()}"></div>
+          <div class="col-md-3"><label class="form-label">Nombre</label><input type="text" class="form-control" id="fBanco" value="${(data.NOMBRE || '').trim()}"></div>
           <div class="col-md-2"><label class="form-label">Cuenta N&ordm;</label><input type="text" class="form-control" id="fCuentaNumero" value="${(data.CUENTANUMERO || '').trim()}"></div>
           <div class="col-md-2"><label class="form-label">Tipo Cuenta</label><input type="text" class="form-control" id="fTipoCuenta" value="${(data.TIPOCUENTA || '').trim()}"></div>
           <div class="col-md-2"><label class="form-label">Direcci&oacute;n</label><input type="text" class="form-control" id="fDireccion" value="${(data.DIRECCION || '').trim()}"></div>
@@ -5420,14 +5815,14 @@ async function ShowFormBanco(guid) {
 
 async function GuardarBanco(guid) {
   const payload = {
-    banco: document.getElementById('fBanco').value.trim(),
+    nombre: document.getElementById('fBanco').value.trim(),
     cuentaNumero: document.getElementById('fCuentaNumero').value.trim(),
     tipoCuenta: document.getElementById('fTipoCuenta').value.trim(),
     direccion: document.getElementById('fDireccion').value.trim(),
     localidad: document.getElementById('fLocalidad').value.trim(),
     telefono: document.getElementById('fTelefono').value.trim(),
   };
-  if (!payload.banco) { ShowToast('Error', 'El nombre del banco es obligatorio', 'error'); return; }
+  if (!payload.nombre) { ShowToast('Error', 'El nombre del banco es obligatorio', 'error'); return; }
   try {
     if (guid) { await API.UpdateBanco(guid, payload); }
     else { await API.CreateBanco(payload); }
@@ -5450,7 +5845,7 @@ async function LoadBancosCuentas() {
   const div = document.getElementById('contenidoCuentas');
   try {
     const [cuentas, bancos] = await Promise.all([API.GetBancosCuentas(), API.GetBancos()]);
-    const bancosOpts = bancos.map(b => `<option value="${b.GUID.trim()}">${(b.BANCO || '').trim()}</option>`).join('');
+    const bancosOpts = bancos.map(b => `<option value="${b.GUID.trim()}">${(b.NOMBRE || '').trim()}</option>`).join('');
     div.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3">
         <div class="d-flex align-items-center gap-2">
@@ -5530,7 +5925,7 @@ async function ShowFormCuenta(guid) {
             <label class="form-label">Banco</label>
             <select class="form-select" id="fcGuidBanco" onchange="OnBancoCuentaChange()">
               <option value="">Seleccionar...</option>
-              ${bancos.map(b => `<option value="${b.GUID.trim()}" data-tipocuenta="${(b.TIPOCUENTA || '').trim()}" ${b.GUID.trim() === (data.GUIDBANCOS || '').trim() ? 'selected' : ''}>${(b.BANCO || '').trim()}</option>`).join('')}
+              ${bancos.map(b => `<option value="${b.GUID.trim()}" data-tipocuenta="${(b.TIPOCUENTA || '').trim()}" ${b.GUID.trim() === (data.GUIDBANCOS || '').trim() ? 'selected' : ''}>${(b.NOMBRE || '').trim()}</option>`).join('')}
             </select>
           </div>
           <div class="col-md-2"><label class="form-label">Tipo Cuenta</label><input type="text" class="form-control" id="fcTipoCuenta" value="${(data.TIPOCUENTA || '').trim()}"></div>
@@ -5688,7 +6083,7 @@ async function LoadConceptosPorBanco() {
     const [items, bancos, conceptos] = await Promise.all([
       API.GetConceptosPorBanco(), API.GetBancos(), API.GetBancosConceptos()
     ]);
-    const bancosOpts = bancos.map(b => `<option value="${b.GUID.trim()}">${(b.BANCO || '').trim()}</option>`).join('');
+    const bancosOpts = bancos.map(b => `<option value="${b.GUID.trim()}">${(b.NOMBRE || '').trim()}</option>`).join('');
     div.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3">
         <div class="d-flex align-items-center gap-2">
@@ -5751,7 +6146,7 @@ async function ShowFormHomologacion(guid) {
             <label class="form-label">Banco</label>
             <select class="form-select" id="fhGuidBanco">
               <option value="">Seleccionar...</option>
-              ${bancos.map(b => `<option value="${b.GUID.trim()}" ${b.GUID.trim() === (data.GUIDBANCOS || '').trim() ? 'selected' : ''}>${(b.BANCO || '').trim()}</option>`).join('')}
+              ${bancos.map(b => `<option value="${b.GUID.trim()}" ${b.GUID.trim() === (data.GUIDBANCOS || '').trim() ? 'selected' : ''}>${(b.NOMBRE || '').trim()}</option>`).join('')}
             </select>
           </div>
           <div class="col-md-3">

@@ -6,8 +6,8 @@ async function Login(id, clave) {
     .input('id', sql.Char(3), id)
     .input('clave', sql.Char(20), clave)
     .query(`
-      SELECT u.GUID, u.CODIGO_USUARIO, u.ID, u.NOMBRE, u.NIVEL, u.MODULOS,
-             u.GUIDSUCURSALES, u.CODIGOUSUARIO, u.GUIDCONFIGURACION
+      SELECT u.GUID, u.CODIGOUSUARIO, u.ID, u.NOMBRE, u.NIVEL, u.MODULOS,
+             u.GUIDSUCURSALES, u.GUIDCONFIGURACION
       FROM Usuarios u
       WHERE RTRIM(LTRIM(u.ID)) = RTRIM(LTRIM(@id))
         AND RTRIM(LTRIM(u.CLAVE)) = RTRIM(LTRIM(@clave))
@@ -20,7 +20,7 @@ async function GetAll() {
   const pool = await getPool();
   const result = await pool.request()
     .query(`
-      SELECT GUID, CODIGO_USUARIO, ID, NOMBRE, NIVEL, CODIGOUSUARIO, GUIDSUCURSALES
+      SELECT GUID, CODIGOUSUARIO, ID, NOMBRE, NIVEL, GUIDSUCURSALES
       FROM Usuarios
       WHERE (dts IS NULL OR dts = 0)
       ORDER BY NOMBRE

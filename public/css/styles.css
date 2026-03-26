@@ -33,7 +33,7 @@ body {
 
 /* Ticket/Receipt look */
 .pos-total-bar {
-  background: linear-gradient(135deg, #198754, #157347);
+  background: linear-gradient(135deg, #0d6efd, #0a58ca);
   color: white;
   padding: 1rem 1.5rem;
   border-radius: 0.5rem;
