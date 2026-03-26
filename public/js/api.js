@@ -76,10 +76,6 @@ const API = (function () {
     return Request('/clientes/cobro-deuda', { method: 'POST', body: JSON.stringify(data) });
   }
 
-  async function RecalcularSaldosClientes() {
-    return Request('/clientes/recalcular-saldos', { method: 'POST' });
-  }
-
   async function GetClientesCtaCte(search) {
     const q = search ? `?search=${encodeURIComponent(search)}` : '';
     return Request(`/clientes/ctacte${q}`);
@@ -330,7 +326,7 @@ const API = (function () {
   return {
     Login, GetUsuarios,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
-    GetClientes, CreateCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, RecalcularSaldosClientes, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
+    GetClientes, CreateCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
     GetSucursales, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
     GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,

@@ -24,9 +24,9 @@ function FormatMoney(n) {
 
 function FormatFechaInt(f) {
   if (!f) return '-';
-  // Clarion date: días desde 1800-12-28
+  // Clarion date: backend almacena floor((date - 1800-12-28) / MS_PER_DAY), +1 para corregir base-0
   const base = new Date(1800, 11, 28);
-  base.setDate(base.getDate() + f);
+  base.setDate(base.getDate() + f + 1);
   const d = base.getDate().toString().padStart(2, '0');
   const m = (base.getMonth() + 1).toString().padStart(2, '0');
   const y = base.getFullYear();
@@ -2162,13 +2162,13 @@ async function MostrarFactura(guidFactura) {
 
       <!-- Totales -->
       <div class="row mb-3">
-        <div class="col-md-6">
+        ${pagosHTML ? `<div class="col-md-6">
           <table class="table table-sm mb-0">
             <thead class="table-light"><tr><th>Medio de Pago</th><th>Detalle</th><th class="text-end">Importe</th></tr></thead>
             <tbody>${pagosHTML}</tbody>
           </table>
-        </div>
-        <div class="col-md-6">
+        </div>` : ''}
+        <div class="${pagosHTML ? 'col-md-6' : 'col-12'}"
           <div class="border rounded p-2">
             <div class="row small">
               <div class="col-6">Neto Gravado:</div><div class="col-6 text-end">${FormatMoney(f.TOTAL_NETO21 || 0)}</div>
@@ -2745,6 +2745,10 @@ async function VerDetalleDevolucion(guid, rowId) {
     const credito = det.credito;
     const tr = document.createElement('tr');
     tr.classList.add('detalle-row');
+    const guidFacDev = (d.GUIDFACTURAS || '').trim();
+    const ncNumero = (d.NotaCreditoNumero || '').trim();
+    const ncTipo = (d.NotaCreditoTipo || '').trim();
+    const tieneNC = guidFacDev && guidFacDev !== '' && ncNumero;
     tr.innerHTML = `<td colspan="5" class="p-0">
       <div class="bg-light p-3 border-top">
         <div class="row mb-2">
@@ -2752,7 +2756,7 @@ async function VerDetalleDevolucion(guid, rowId) {
           <div class="col-md-4"><small class="text-muted">Tipo:</small> <strong>${(d.TIPOOPERACION || '').trim()}</strong></div>
           ${credito ? `<div class="col-md-4"><small class="text-muted">Credito:</small> <strong class="text-success">${FormatMoney(credito.MONTODISPONIBLE)} disponible</strong></div>` : ''}
         </div>
-        <table class="table table-sm table-bordered mb-0">
+        <table class="table table-sm table-bordered mb-2">
           <thead><tr><th>Codigo</th><th>Descripcion</th><th>Talle</th><th class="text-center">Cant.</th><th class="text-end">P.Unit.</th><th class="text-end">Subtotal</th></tr></thead>
           <tbody>
             ${items.map(it => `
@@ -2767,6 +2771,10 @@ async function VerDetalleDevolucion(guid, rowId) {
             `).join('')}
           </tbody>
         </table>
+        <div class="d-flex gap-2">
+          ${tieneNC ? `<button class="btn btn-sm btn-outline-primary" onclick="MostrarFactura('${guidFacDev}')"><i class="bi bi-receipt me-1"></i>${ncTipo} ${ncNumero}</button>` : ''}
+          <button class="btn btn-sm btn-outline-secondary" onclick="GenerarComprobantePDF('${guid}')"><i class="bi bi-file-earmark-pdf me-1"></i>Comprobante PDF</button>
+        </div>
       </div>
     </td>`;
     row.after(tr);
@@ -2808,10 +2816,6 @@ async function SeleccionarVentaDev(guid) {
               <input type="text" id="devMotivo" class="form-control" placeholder="Describa el motivo de la devolucion..." required>
               <div class="invalid-feedback">El motivo es obligatorio</div>
             </div>
-          </div>
-          <div class="form-check form-switch mb-3">
-            <input class="form-check-input" type="checkbox" id="devEmitirNC">
-            <label class="form-check-label" for="devEmitirNC"><i class="bi bi-receipt-cutoff me-1"></i>Emitir Nota de Credito fiscal</label>
           </div>
           <table class="table table-sm">
             <thead class="table-light">
@@ -2985,8 +2989,6 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
   });
   if (errorCantidad) return;
 
-  const emitirNotaCredito = document.getElementById('devEmitirNC')?.checked || false;
-
   try {
     const result = await API.CreateDevolucion({
       guidRemitoOriginal,
@@ -2998,7 +3000,6 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
       items,
       motivo,
       tipoDevolucion,
-      emitirNotaCredito,
     });
     _devCambioCliente = null;
 
@@ -3016,8 +3017,11 @@ async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidClient
           <p>Total: <strong>${FormatMoney(result.total)}</strong>${result.notaCredito ? ` | Nota de Credito: <strong>${result.notaCredito}</strong>` : ''}</p>
           <p class="text-muted">Se genero un credito a favor del cliente por <strong>${FormatMoney(result.total)}</strong> aplicable en futuras compras.</p>
           <div class="d-flex justify-content-center gap-2">
-            <button class="btn btn-primary" onclick="GenerarComprobantePDF('${result.guid}')">
-              <i class="bi bi-file-earmark-pdf me-1"></i>Generar Comprobante PDF
+            ${result.guidNotaCredito ? `<button class="btn btn-primary" onclick="MostrarFactura('${result.guidNotaCredito}')">
+              <i class="bi bi-receipt me-1"></i>Ver Nota de Credito
+            </button>` : ''}
+            <button class="btn btn-outline-primary" onclick="GenerarComprobantePDF('${result.guid}')">
+              <i class="bi bi-file-earmark-pdf me-1"></i>Comprobante PDF
             </button>
             <button class="btn btn-outline-secondary" onclick="RenderDevoluciones(document.getElementById('mainContent'))">
               <i class="bi bi-arrow-left me-1"></i>Volver
@@ -3274,7 +3278,7 @@ async function GenerarComprobantePDF(guidDevolucion) {
 // ── Helpers para formato Clarion en PDF ──
 function ClarionToDate(clarionDate) {
   const base = new Date(1800, 11, 28);
-  return new Date(base.getTime() + clarionDate * 86400000);
+  return new Date(base.getTime() + (clarionDate + 1) * 86400000);
 }
 
 function ClarionToDateStr(clarionDate) {
@@ -3444,6 +3448,10 @@ async function VerDetalleCambio(guid, rowId) {
     const det = await API.GetCambioDetalle(guid);
     const d = det.cambio;
     const items = det.items || [];
+    const guidNCCambio = d ? (d.GuidNotaCredito || '').trim() : '';
+    const ncNumeroCambio = d ? (d.NotaCreditoNumero || '').trim() : '';
+    const ncTipoCambio = d ? (d.NotaCreditoTipo || '').trim() : '';
+    const tieneNCCambio = guidNCCambio && guidNCCambio !== '' && ncNumeroCambio;
     const tr = document.createElement('tr');
     tr.classList.add('detalle-row');
     tr.innerHTML = `<td colspan="5" class="p-0">
@@ -3452,7 +3460,7 @@ async function VerDetalleCambio(guid, rowId) {
           <div class="col-md-6"><small class="text-muted">Sucursal:</small> <strong>${d ? (d.Sucursal || '-') : '-'}</strong></div>
           <div class="col-md-6"><small class="text-muted">Tipo:</small> <strong>${d ? (d.TIPOOPERACION || '').trim() : '-'}</strong></div>
         </div>
-        <table class="table table-sm table-bordered mb-0">
+        <table class="table table-sm table-bordered mb-2">
           <thead><tr><th>Codigo</th><th>Descripcion</th><th>Talle</th><th class="text-center">Cant.</th><th class="text-end">P.Unit.</th><th class="text-end">Subtotal</th></tr></thead>
           <tbody>
             ${items.map(it => `
@@ -3467,6 +3475,9 @@ async function VerDetalleCambio(guid, rowId) {
             `).join('')}
           </tbody>
         </table>
+        ${tieneNCCambio ? `<div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-primary" onclick="MostrarFactura('${guidNCCambio}')"><i class="bi bi-receipt me-1"></i>${ncTipoCambio} ${ncNumeroCambio}</button>
+        </div>` : ''}
       </div>
     </td>`;
     row.after(tr);
@@ -3734,14 +3745,17 @@ async function ConfirmarCambioConVenta() {
     const msgDif = result.diferencia > 0 ? ` | Diferencia cobrada: ${FormatMoney(result.diferencia)}` : '';
     const msgFavor = result.saldoAFavor > 0 ? ` | Saldo a favor: ${FormatMoney(result.saldoAFavor)}` : '';
     const msgFac = result.factura ? ` | Factura: ${result.factura}` : '';
+    const msgNC = result.notaCredito ? ` | NC: ${result.notaCredito}` : '';
     ShowToast('Cambio exitoso',
-      `Cambio: ${FormatMoney(result.totalCambio)} | Nueva venta: ${FormatMoney(result.totalVenta)}${msgDif}${msgFavor}${msgFac} | Pago: ${result.formaPago}`,
+      `Cambio: ${FormatMoney(result.totalCambio)} | Nueva venta: ${FormatMoney(result.totalVenta)}${msgDif}${msgFavor}${msgFac}${msgNC} | Pago: ${result.formaPago}`,
       'success');
     POS.Reset();
     RenderPOS(document.getElementById('mainContent'));
 
-    // Si se emitió factura, mostrar el comprobante con opciones de autorizar/enviar
-    if (result.guidFactura) {
+    // Mostrar NC si se emitió, o factura de la venta nueva
+    if (result.guidNotaCredito) {
+      MostrarFactura(result.guidNotaCredito);
+    } else if (result.guidFactura) {
       MostrarFactura(result.guidFactura);
     }
   } catch (err) {
@@ -4838,16 +4852,7 @@ function RenderClientes(container) {
     <h4 class="mb-3"><i class="bi bi-people me-2"></i>Clientes</h4>
     <div class="card shadow-sm mb-3">
       <div class="card-body">
-        <div class="row g-2 align-items-end">
-          <div class="col-md-6">
-            <input type="text" id="clienteSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIT..." onkeyup="BuscarClientes()">
-          </div>
-          <div class="col-md-6 text-end">
-            <button class="btn btn-outline-warning btn-sm" onclick="RecalcularSaldosClientes()" id="btnRecalcSaldos">
-              <i class="bi bi-calculator me-1"></i>Recalcular saldos
-            </button>
-          </div>
-        </div>
+        <input type="text" id="clienteSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIT..." onkeyup="BuscarClientes()">
       </div>
     </div>
     <div id="clientesResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
@@ -4855,22 +4860,6 @@ function RenderClientes(container) {
   BuscarClientes();
 }
 
-async function RecalcularSaldosClientes() {
-  const btn = document.getElementById('btnRecalcSaldos');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Recalculando...';
-  try {
-    const result = await API.RecalcularSaldosClientes();
-    const msg = `Saldos: ${result.actualizados} actualizado(s)` + (result.reconciliados ? ` | Movimientos reconciliados: ${result.reconciliados}` : '');
-    ShowToast('Recálculo completado', msg, 'success');
-    BuscarClientes(); // Refrescar la tabla
-  } catch (err) {
-    ShowToast('Error', err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-calculator me-1"></i>Recalcular saldos';
-  }
-}
 
 async function BuscarClientes() {
   const search = (document.getElementById('clienteSearch')?.value || '').trim();
@@ -5114,6 +5103,7 @@ async function CobrarDeudaSeleccionada(guidCliente) {
   if (checks.length === 0) { ShowToast('Aviso', 'Seleccione al menos un comprobante', 'info'); return; }
   let total = 0;
   const items = [];
+  let tieneDeuda = false;
   checks.forEach(cb => {
     const idx = cb.dataset.idx;
     const input = document.querySelector(`.deudaCobrar[data-idx="${idx}"]`);
@@ -5122,12 +5112,14 @@ async function CobrarDeudaSeleccionada(guidCliente) {
     if (max > 0) {
       if (valor > max) valor = max;
       total += valor;
+      tieneDeuda = true;
     } else {
       total += max;
       valor = Math.abs(max);
     }
     items.push({ guid: cb.dataset.guid, importe: valor, esParcial: max > 0 && valor < max, factura: (cb.dataset.factura || '').trim() });
   });
+  if (!tieneDeuda) { ShowToast('Aviso', 'No se pueden cobrar solo créditos a favor. Seleccione al menos un comprobante de deuda.', 'warning'); return; }
 
   // Verificar si todos los comprobantes seleccionados ya tienen factura fiscal
   const todosConFactura = items.length > 0 && items.every(it => it.factura !== '');

@@ -5,11 +5,11 @@ const devolucionesRepo = require('../../db/repositories/devolucionesRepo');
 // Devolucion (reingresa mercaderia, registra en RemitosDevoluciones)
 router.post('/', async (req, res, next) => {
   try {
-    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion, emitirNotaCredito } = req.body;
+    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion } = req.body;
     if (!motivo || !motivo.trim()) {
       return res.status(400).json({ error: 'El motivo de devolucion es obligatorio' });
     }
-    const data = await devolucionesRepo.CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion, emitirNotaCredito });
+    const data = await devolucionesRepo.CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion });
     res.status(201).json(data);
   } catch (err) { next(err); }
 });

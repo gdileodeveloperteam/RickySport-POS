@@ -121,63 +121,12 @@ async function UpdateSaldo(guid, nuevoSaldo) {
     .query(`UPDATE Clientes SET SALDO = @saldo WHERE GUID = @guid`);
 }
 
-async function RecalcularSaldos() {
+async function RecalcularSaldos(guidCliente = null) {
   const pool = await getPool();
-
-  // 1. Reconciliar movimientos legacy: marcar HABER "Ingreso por venta"
-  //    y TODOS los DEBE del mismo GUIDREMITOS como saldados
-  const reconciled = await pool.request().query(`
-    ;WITH RemitosConIngreso AS (
-      SELECT DISTINCT RTRIM(mc.GUIDREMITOS) AS GuidRemito
-      FROM MovimientoClientes mc
-      WHERE mc.DESCRIPCION LIKE '%Ingreso por venta %'
-        AND mc.HABER > 0
-        AND mc.GUIDREMITOS <> ''
-        AND (mc.GUIDFORMAPAGOS = '' OR mc.GUIDFORMAPAGOS IS NULL)
-        AND (mc.dts IS NULL OR mc.dts = 0)
-    )
-    UPDATE mc
-    SET mc.GUIDFORMAPAGOS = 'RECONCILIADO'
-    FROM MovimientoClientes mc
-    INNER JOIN RemitosConIngreso r ON RTRIM(mc.GUIDREMITOS) = r.GuidRemito
-    WHERE (mc.GUIDFORMAPAGOS = '' OR mc.GUIDFORMAPAGOS IS NULL)
-      AND (mc.dts IS NULL OR mc.dts = 0)
-  `);
-  const reconciliados = reconciled.rowsAffected[0] || 0;
-
-  // 2. Reconciliar cobros legacy: HABER "Cobro Cta. Cte." sin GUIDFORMAPAGOS
-  await pool.request().query(`
-    UPDATE MovimientoClientes
-    SET GUIDFORMAPAGOS = 'RECONCILIADO'
-    WHERE DESCRIPCION LIKE 'Cobro Cta. Cte.%'
-      AND HABER > 0
-      AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL)
-      AND (dts IS NULL OR dts = 0)
-  `);
-
-  // 3. Recalcular saldos: movimientos pendientes - pagos parciales
-  const result = await pool.request().query(`
-    UPDATE c
-    SET c.SALDO = ISNULL(mov.SaldoReal, 0)
-    FROM Clientes c
-    CROSS APPLY (
-      SELECT SUM(ISNULL(mc.DEBE, 0)) - ISNULL(SUM(pp.TotalParcial), 0) - SUM(ISNULL(mc.HABER, 0)) AS SaldoReal
-      FROM MovimientoClientes mc
-      LEFT JOIN (
-        SELECT GUIDMOVIMIENTOCLIENTES, SUM(IMPORTEPAGADO) AS TotalParcial
-        FROM PagosParcialesMovimientos WHERE (dts IS NULL OR dts = 0)
-        GROUP BY GUIDMOVIMIENTOCLIENTES
-      ) pp ON pp.GUIDMOVIMIENTOCLIENTES = mc.GUID
-      WHERE mc.GUIDCLIENTES = c.GUID
-        AND (mc.dts IS NULL OR mc.dts = 0)
-        AND (mc.GUIDFORMAPAGOS = '' OR mc.GUIDFORMAPAGOS IS NULL)
-    ) mov
-    WHERE c.SALDO <> ISNULL(mov.SaldoReal, 0)
-      AND (c.dts IS NULL OR c.dts = 0)
-  `);
-  const saldosActualizados = result.rowsAffected[0] || 0;
-
-  return { actualizados: saldosActualizados, reconciliados };
+  const req = pool.request();
+  if (guidCliente) req.input('guid', sql.Char(16), guidCliente);
+  await req.query(`EXEC SP_RecalcularSaldoCliente ${guidCliente ? '@GuidCliente = @guid' : ''}`);
+  return { ok: true };
 }
 
 async function GetMovimientos(guidCliente, desde, hasta) {
@@ -528,11 +477,10 @@ async function CobroDeuda({ guidCliente, guidSucursal, guidUsuario, items, pagos
           @guidRemitoDev, @guidRemitoCambio, @guidFormaPagos, @ts, @sts, @dts)
       `);
 
-    // 4. Actualizar saldo del cliente
+    // 4. Recalcular saldo del cliente via SP
     await tx.request()
       .input('guid', sql.Char(16), guidCliente)
-      .input('importe', sql.Decimal(13, 3), total)
-      .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) - @importe WHERE GUID = @guid`);
+      .query(`EXEC SP_RecalcularSaldoCliente @GuidCliente = @guid`);
 
     // 5. Generar factura (Recibo) si se solicitó
     let guidFactura = null;

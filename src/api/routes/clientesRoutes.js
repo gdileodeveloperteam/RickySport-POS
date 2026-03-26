@@ -37,6 +37,7 @@ router.post('/cobro-deuda', async (req, res, next) => {
 
 router.get('/ctacte', async (req, res, next) => {
   try {
+    await clientesRepo.RecalcularSaldos();
     const data = await clientesRepo.GetCtaCte(req.query.search);
     res.json(data);
   } catch (err) { next(err); }

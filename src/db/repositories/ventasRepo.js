@@ -307,22 +307,10 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
             `);
         }
 
-        // Ajustar saldo del cliente: la devolución redujo el saldo (crédito a favor),
-        // al consumir ese crédito el saldo debe subir de vuelta
-        if (guidCliente && guidCliente !== EMPTY_GUID) {
-          await tx.request()
-            .input('guid', sql.Char(16), guidCliente)
-            .input('importe', sql.Decimal(13, 3), pago.importe)
-            .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) + @importe WHERE GUID = @guid`);
-        }
       }
 
-      // Si pago es Cuenta Corriente, actualizar saldo cliente
+      // Si pago es Cuenta Corriente, registrar movimiento en cta cte
       if (pago._esCtaCte && guidCliente && guidCliente !== EMPTY_GUID) {
-        await tx.request()
-          .input('guid', sql.Char(16), guidCliente)
-          .input('importe', sql.Decimal(13, 3), pago.importe)
-          .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) + @importe WHERE GUID = @guid`);
 
         const guidMovCli = newGuid();
         await tx.request()
@@ -490,6 +478,13 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .query(`UPDATE Remitos SET GUIDFACTURAS = @guidFactura, PENDIENTEFACTURAR = 0 WHERE GUID = @guidRemito`);
 
       facturaNumero = numFacturaStr;
+    }
+
+    // Recalcular saldo del cliente via SP
+    if (guidCliente && guidCliente !== EMPTY_GUID) {
+      await tx.request()
+        .input('guid', sql.Char(16), guidCliente)
+        .query(`EXEC SP_RecalcularSaldoCliente @GuidCliente = @guid`);
     }
 
     await tx.commit();
@@ -719,31 +714,65 @@ async function GetFacturaDetalle(guidFactura) {
   const f = factura.recordset[0];
   if (!f) return null;
 
-  // Obtener items del remito vinculado
+  const tipoComp = (f.TIPO_COMPROBANTE || '').trim();
+  const esNC = tipoComp === 'NCA' || tipoComp === 'NCB';
   const guidRemito = (f.GUIDREMITOS || '').trim();
   let items = [];
-  if (guidRemito) {
-    const itemsResult = await pool.request()
-      .input('guidRemito', sql.Char(16), guidRemito)
-      .query(`
-        SELECT ARTICULO, DESCRIPCION, NUMERO, CANTIDAD, NETO, SUBTOTAL, TOTAL
-        FROM MovimientoRemitos
-        WHERE GUIDREMITOS = @guidRemito AND (dts IS NULL OR dts = 0)
-      `);
-    items = itemsResult.recordset;
-  }
-
-  // Obtener pagos del remito
   let pagos = [];
-  if (guidRemito) {
-    const pagosResult = await pool.request()
-      .input('guidRemito', sql.Char(16), guidRemito)
-      .query(`
-        SELECT RTRIM(TIPOCOMPROBANTE) AS TIPOCOMPROBANTE, RTRIM(DESCRIPCION) AS DESCRIPCION, IMPORTE
-        FROM FormaPagos
-        WHERE GUIDREMITOS = @guidRemito AND (dts IS NULL OR dts = 0)
-      `);
-    pagos = pagosResult.recordset;
+
+  if (esNC) {
+    // Para NC: buscar items del remito de devolucion o cambio vinculado
+    const devResult = await pool.request()
+      .input('guidFac', sql.Char(16), guidFactura)
+      .query(`SELECT GUID FROM RemitosDevoluciones WHERE RTRIM(GUIDFACTURAS) = @guidFac AND (dts IS NULL OR dts = 0)`);
+    const guidDev = (devResult.recordset[0]?.GUID || '').trim();
+    if (guidDev) {
+      const itemsResult = await pool.request()
+        .input('guidDev', sql.Char(16), guidDev)
+        .query(`
+          SELECT ARTICULO, DESCRIPCION, NUMERO, CANTIDAD, NETO, SUBTOTAL, TOTAL
+          FROM MovimientoRemitos
+          WHERE GUIDREMITOSDEVOLUCIONES = @guidDev AND (dts IS NULL OR dts = 0)
+        `);
+      items = itemsResult.recordset;
+    } else {
+      // Buscar en cambios
+      const cambResult = await pool.request()
+        .input('guidFac', sql.Char(16), guidFactura)
+        .query(`SELECT GUID FROM RemitosCambios WHERE RTRIM(GUIDFACTURAS) = @guidFac AND (dts IS NULL OR dts = 0)`);
+      const guidCambio = (cambResult.recordset[0]?.GUID || '').trim();
+      if (guidCambio) {
+        const itemsResult = await pool.request()
+          .input('guidCambio', sql.Char(16), guidCambio)
+          .query(`
+            SELECT ARTICULO, DESCRIPCION, NUMERO, CANTIDAD, NETO, SUBTOTAL, TOTAL
+            FROM MovimientoRemitos
+            WHERE GUIDREMITOSCAMBIOS = @guidCambio AND (dts IS NULL OR dts = 0)
+          `);
+        items = itemsResult.recordset;
+      }
+    }
+  } else {
+    // Para facturas normales: items y pagos del remito
+    if (guidRemito) {
+      const itemsResult = await pool.request()
+        .input('guidRemito', sql.Char(16), guidRemito)
+        .query(`
+          SELECT ARTICULO, DESCRIPCION, NUMERO, CANTIDAD, NETO, SUBTOTAL, TOTAL
+          FROM MovimientoRemitos
+          WHERE GUIDREMITOS = @guidRemito AND (dts IS NULL OR dts = 0)
+        `);
+      items = itemsResult.recordset;
+
+      const pagosResult = await pool.request()
+        .input('guidRemito', sql.Char(16), guidRemito)
+        .query(`
+          SELECT RTRIM(TIPOCOMPROBANTE) AS TIPOCOMPROBANTE, RTRIM(DESCRIPCION) AS DESCRIPCION, IMPORTE
+          FROM FormaPagos
+          WHERE GUIDREMITOS = @guidRemito AND (dts IS NULL OR dts = 0)
+        `);
+      pagos = pagosResult.recordset;
+    }
   }
 
   return { factura: f, items, pagos };

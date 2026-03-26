@@ -6,7 +6,7 @@ const EMPTY_GUID = '';
 // ============================================================================
 // Devolución: reingresa mercadería y registra en RemitosDevoluciones
 // ============================================================================
-async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion, emitirNotaCredito }) {
+async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, items, motivo, tipoDevolucion }) {
   const pool = await getPool();
   const tx = pool.transaction();
   await tx.begin();
@@ -120,13 +120,8 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
         `);
     }
 
-    // 3. Si cliente tiene cuenta corriente, devolver saldo
+    // 3. Si cliente tiene cuenta corriente, registrar movimientos
     if (guidCliente && guidCliente !== EMPTY_GUID) {
-      await tx.request()
-        .input('guid', sql.Char(16), guidCliente)
-        .input('importe', sql.Decimal(13, 3), totalDevolucion)
-        .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) - @importe WHERE GUID = @guid`);
-
       for (const item of items) {
         const guidMovCli = newGuid();
         const subtotalItem = item.cantidad * item.precioUnitario;
@@ -171,9 +166,22 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
       }
     }
 
-    // 4. Emitir Nota de Credito si corresponde
+    // 4. Emitir Nota de Credito automaticamente si el remito original tiene factura fiscal
     let notaCreditoNumero = null;
-    if (emitirNotaCredito) {
+    let guidNotaCreditoResult = null;
+    const facOrigResult = await tx.request()
+      .input('guidRemOrig', sql.Char(16), guidRemitoOriginal)
+      .query(`SELECT RTRIM(GUIDFACTURAS) AS GUIDFACTURAS FROM Remitos WHERE GUID = @guidRemOrig`);
+    const guidFacOrig = (facOrigResult.recordset[0]?.GUIDFACTURAS || '').trim();
+
+    if (guidFacOrig && guidFacOrig !== EMPTY_GUID) {
+      // Obtener tipo de factura original (A o B) para emitir NC del mismo tipo
+      const facDetResult = await tx.request()
+        .input('guidFac', sql.Char(16), guidFacOrig)
+        .query(`SELECT RTRIM(TIPO_FACTURA) AS TIPO_FACTURA FROM Facturas WHERE GUID = @guidFac`);
+      const tipoFacturaOrig = (facDetResult.recordset[0]?.TIPO_FACTURA || 'B').trim().toUpperCase();
+      const esNCA = tipoFacturaOrig === 'A';
+
       const guidNotaCredito = newGuid();
 
       // Obtener TIPO_IVA y DIRECCION del cliente para la NC
@@ -192,17 +200,29 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
         }
       }
 
+      const tipoComp = esNCA ? 'NCA' : 'NCB';
+      const codDocAfip = esNCA ? 80 : 99;
+
       const sucResult = await tx.request()
         .input('guidSuc', sql.Char(16), guidSucursal)
-        .query(`SELECT PUNTOVENTA, ULTIMANOTACREDITOB, GUIDCONFIGURACION, IDCOMPROBANTENCDB FROM Sucursales WHERE GUID = @guidSuc`);
+        .query(`SELECT PUNTOVENTA, ULTIMANOTACREDITOA, ULTIMANOTACREDITOB, GUIDCONFIGURACION, IDCOMPROBANTENCDA, IDCOMPROBANTENCDB FROM Sucursales WHERE GUID = @guidSuc`);
 
       const suc = sucResult.recordset[0] || {};
       const puntoVenta = suc.PUNTOVENTA || 1;
-      const ultimaNC = suc.ULTIMANOTACREDITOB || 0;
+      const ultimaNC = esNCA ? (suc.ULTIMANOTACREDITOA || 0) : (suc.ULTIMANOTACREDITOB || 0);
       const numeroNC = ultimaNC + 1;
       const guidConfig = suc.GUIDCONFIGURACION || EMPTY_GUID;
-      const idComp = suc.IDCOMPROBANTENCDB || 8;
+      const idComp = esNCA ? (suc.IDCOMPROBANTENCDA || 3) : (suc.IDCOMPROBANTENCDB || 8);
       const numNCStr = `${String(puntoVenta).padStart(4, '0')}-${String(numeroNC).padStart(8, '0')}`;
+
+      let totalNeto21, totalIva21;
+      if (esNCA) {
+        totalNeto21 = Math.round((totalDevolucion / 1.21) * 100) / 100;
+        totalIva21 = Math.round((totalNeto21 * 0.21) * 100) / 100;
+      } else {
+        totalNeto21 = totalDevolucion;
+        totalIva21 = 0;
+      }
 
       await tx.request()
         .input('guid', sql.Char(16), guidNotaCredito)
@@ -213,15 +233,15 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
         .input('codConfig', sql.Int, 1)
         .input('codImputacion', sql.Int, 0)
         .input('codVendedor', sql.Int, 0)
-        .input('codDocAfip', sql.Decimal(3), 99)
+        .input('codDocAfip', sql.Decimal(3), codDocAfip)
         .input('codConceptoAfip', sql.Decimal(3), 1)
         .input('idComp', sql.Int, idComp)
         .input('numFactura', sql.Char(13), numNCStr)
         .input('puntoVenta', sql.Int, puntoVenta)
         .input('numero', sql.Int, numeroNC)
         .input('numeroHasta', sql.Int, numeroNC)
-        .input('tipoComp', sql.Char(3), 'NCB')
-        .input('tipoFactura', sql.Char(1), 'B')
+        .input('tipoComp', sql.Char(3), tipoComp)
+        .input('tipoFactura', sql.Char(1), tipoFacturaOrig)
         .input('tipoIva', sql.NVarChar, tipoIvaCliente || null)
         .input('fecha', sql.Decimal(7), dateToClarion())
         .input('fechaVencimiento', sql.Date, todayAR())
@@ -231,29 +251,39 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
         .input('direccion', sql.NVarChar, direccionCliente || null)
         .input('cuit', sql.Char(13), cuitCliente)
         .input('total', sql.Decimal(15, 2), totalDevolucion)
-        .input('neto', sql.Decimal(15, 2), totalDevolucion)
+        .input('neto21', sql.Decimal(15, 2), totalNeto21)
+        .input('iva21', sql.Decimal(15, 2), totalIva21)
         .input('pendiente', sql.TinyInt, 0)
+        .input('dateAdded', sql.Int, dateToInt())
+        .input('timeAdded', sql.Int, timeToInt())
         .query(`
-          INSERT INTO Facturas (GUID, GUIDCLIENTES, GUIDCONFIGURACION, ts, sts,
+          INSERT INTO Facturas (GUID, GUIDCLIENTES, GUIDREMITOS, GUIDCONFIGURACION, ts, sts,
             CODIGO_CONFIGURACION, CODIGO_IMPUTACION, CODIGO_VENDEDOR,
             CODIGO_DOCUMENTO_AFIP, CODIGO_CONCEPTO_AFIP, IDCOMP,
             NUMERO_FACTURA, PUNTOVENTA, NUMERO, NUMEROHASTA,
             TIPO_COMPROBANTE, TIPO_FACTURA, TIPO_IVA, FECHA, FECHA_VENCIMIENTO,
             FECHASERVDESDE, FECHASERVHASTA, NOMBRE, DIRECCION, CUIT,
-            TOTAL, TOTAL_NETO21, PENDIENTE)
-          VALUES (@guid, @guidCliente, @guidConfig, @ts, @sts,
+            TOTAL, TOTAL_NETO21, TOTAL_IVA21, TOTAL_NETO0, TOTAL_IVA0,
+            TOTAL_EXENTO, TOTAL_NOGRAVADO, PENDIENTE,
+            DATEADDED, TIMEADDED)
+          VALUES (@guid, @guidCliente, '', @guidConfig, @ts, @sts,
             @codConfig, @codImputacion, @codVendedor,
             @codDocAfip, @codConceptoAfip, @idComp,
             @numFactura, @puntoVenta, @numero, @numeroHasta,
             @tipoComp, @tipoFactura, @tipoIva, @fecha, @fechaVencimiento,
             @fechaServDesde, @fechaServHasta, @nombre, @direccion, @cuit,
-            @total, @neto, @pendiente)
+            @total, @neto21, @iva21, 0, 0,
+            0, 0, @pendiente,
+            @dateAdded, @timeAdded)
         `);
 
       await tx.request()
         .input('guidSuc', sql.Char(16), guidSucursal)
         .input('numero', sql.Int, numeroNC)
-        .query(`UPDATE Sucursales SET ULTIMANOTACREDITOB = @numero WHERE GUID = @guidSuc`);
+        .query(esNCA
+          ? `UPDATE Sucursales SET ULTIMANOTACREDITOA = @numero WHERE GUID = @guidSuc`
+          : `UPDATE Sucursales SET ULTIMANOTACREDITOB = @numero WHERE GUID = @guidSuc`
+        );
 
       await tx.request()
         .input('guidDev', sql.Char(16), guidRemitoDev)
@@ -261,6 +291,7 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
         .query(`UPDATE RemitosDevoluciones SET GUIDFACTURAS = @guidFactura, PENDIENTEFACTURAR = 0 WHERE GUID = @guidDev`);
 
       notaCreditoNumero = numNCStr;
+      guidNotaCreditoResult = guidNotaCredito;
     }
 
     // 5. Crear credito de devolucion para uso como forma de pago futura
@@ -281,8 +312,15 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
           @fecha, @montoOriginal, 0, 'ACTIVO', @ts, @sts)
       `);
 
+    // Recalcular saldo del cliente via SP
+    if (guidCliente && guidCliente !== EMPTY_GUID) {
+      await tx.request()
+        .input('guid', sql.Char(16), guidCliente)
+        .query(`EXEC SP_RecalcularSaldoCliente @GuidCliente = @guid`);
+    }
+
     await tx.commit();
-    return { guid: guidRemitoDev, total: totalDevolucion, notaCredito: notaCreditoNumero, guidCredito };
+    return { guid: guidRemitoDev, total: totalDevolucion, notaCredito: notaCreditoNumero, guidNotaCredito: guidNotaCreditoResult, guidCredito };
   } catch (err) {
     await tx.rollback();
     throw err;
@@ -440,9 +478,12 @@ async function CreateCambioConVenta({
 
     // ================================================================
     // PARTE A.2: MovimientoClientes del cambio (credito al cliente)
+    // Los movimientos item-a-item se marcan como conciliados (GUIDFORMAPAGOS = guidRemitoCambio)
+    // para que no aparezcan como pendientes en deuda activa.
+    // Solo queda pendiente el neto (saldo a favor en PARTE C.2, o diferencia CTA_CTE en PARTE C)
     // ================================================================
     if (guidCliente && guidCliente !== EMPTY_GUID) {
-      // Un registro por cada item devuelto (credito)
+      // Un registro por cada item devuelto (credito) — conciliado
       for (const item of itemsCambio) {
         const guidMovCliCambio = newGuid();
         const subtotalItem = item.cantidad * item.precioUnitario;
@@ -469,6 +510,7 @@ async function CreateCambioConVenta({
           .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
           .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
           .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
+          .input('guidFormaPagos', sql.Char(16), guidRemitoCambio)
           .input('ts', sql.Float, ts)
           .input('sts', sql.Float, ts)
           .input('dts', sql.Float, 0)
@@ -477,16 +519,16 @@ async function CreateCambioConVenta({
               PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
               GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
               GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
-              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, GUIDFORMAPAGOS, ts, sts, dts)
             VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
               @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
               @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
               @guidCaja, @guidBanco, @guidMovBanco,
-              @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
+              @guidRemitoDev, @guidRemitoCambio, @guidFormaPagos, @ts, @sts, @dts)
           `);
       }
 
-      // Un registro por cada item de la nueva venta (debito)
+      // Un registro por cada item de la nueva venta (debito) — conciliado
       for (const item of itemsVenta) {
         const guidMovCliVenta = newGuid();
         const subtotalItem = item.cantidad * item.precioUnitario;
@@ -513,6 +555,7 @@ async function CreateCambioConVenta({
           .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
           .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
           .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
+          .input('guidFormaPagos', sql.Char(16), guidRemitoCambio)
           .input('ts', sql.Float, ts)
           .input('sts', sql.Float, ts)
           .input('dts', sql.Float, 0)
@@ -521,12 +564,12 @@ async function CreateCambioConVenta({
               PRECIOUNITARIO, IVA, DEBE, HABER, SALDO, PAGO, SUCURSAL,
               GUIDCLIENTES, GUIDARTICULOS, GUIDREMITOS, GUIDFORMAPAGO,
               GUIDCAJADIARIA, GUIDBANCOS, GUIDMOVIMIENTOBANCOS,
-              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, ts, sts, dts)
+              GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, GUIDFORMAPAGOS, ts, sts, dts)
             VALUES (@guid, @fecha, @cantidad, @articulo, @descripcion, @talle,
               @precioUnitario, @iva, @debe, @haber, @saldo, @pago, @sucursal,
               @guidCliente, @guidArticulo, @guidRemito, @guidFormaPago,
               @guidCaja, @guidBanco, @guidMovBanco,
-              @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
+              @guidRemitoDev, @guidRemitoCambio, @guidFormaPagos, @ts, @sts, @dts)
           `);
       }
     }
@@ -770,13 +813,8 @@ async function CreateCambioConVenta({
           }
         }
 
-        // Si pago es CTA_CTE, actualizar saldo cliente
+        // Si pago es CTA_CTE, registrar movimiento en cta cte
         if (pago._esCtaCte && guidCliente && guidCliente !== EMPTY_GUID) {
-          await tx.request()
-            .input('guid', sql.Char(16), guidCliente)
-            .input('importe', sql.Decimal(13, 3), pago.importe)
-            .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) + @importe WHERE GUID = @guid`);
-
           const guidMovCli = newGuid();
           await tx.request()
             .input('guid', sql.Char(16), guidMovCli)
@@ -825,11 +863,6 @@ async function CreateCambioConVenta({
     // ================================================================
     if (diferencia < -0.01 && guidCliente && guidCliente !== EMPTY_GUID) {
       const saldoAFavor = Math.abs(diferencia);
-      // Reducir saldo del cliente (a favor)
-      await tx.request()
-        .input('guid', sql.Char(16), guidCliente)
-        .input('importe', sql.Decimal(13, 3), saldoAFavor)
-        .query(`UPDATE Clientes SET SALDO = ISNULL(SALDO, 0) - @importe WHERE GUID = @guid`);
 
       // Registrar movimiento HABER (a favor)
       const guidMovCliFavor = newGuid();
@@ -871,6 +904,132 @@ async function CreateCambioConVenta({
             @guidCaja, @guidBanco, @guidMovBanco,
             @guidRemitoDev, @guidRemitoCambio, @ts, @sts, @dts)
         `);
+    }
+
+    // ================================================================
+    // PARTE D.0: Emitir Nota de Credito automaticamente si el remito original tiene factura
+    // ================================================================
+    let notaCreditoNumero = null;
+    let guidNotaCreditoCambioResult = null;
+    const facOrigCambioResult = await tx.request()
+      .input('guidRemOrig', sql.Char(16), guidRemitoOriginal)
+      .query(`SELECT RTRIM(GUIDFACTURAS) AS GUIDFACTURAS FROM Remitos WHERE GUID = @guidRemOrig`);
+    const guidFacOrigCambio = (facOrigCambioResult.recordset[0]?.GUIDFACTURAS || '').trim();
+
+    if (guidFacOrigCambio && guidFacOrigCambio !== EMPTY_GUID) {
+      const facDetCambioResult = await tx.request()
+        .input('guidFac', sql.Char(16), guidFacOrigCambio)
+        .query(`SELECT RTRIM(TIPO_FACTURA) AS TIPO_FACTURA FROM Facturas WHERE GUID = @guidFac`);
+      const tipoFacturaOrigCambio = (facDetCambioResult.recordset[0]?.TIPO_FACTURA || 'B').trim().toUpperCase();
+      const esNCACambio = tipoFacturaOrigCambio === 'A';
+
+      const guidNotaCreditoCambio = newGuid();
+      const tipoCompNC = esNCACambio ? 'NCA' : 'NCB';
+      const codDocAfipNC = esNCACambio ? 80 : 99;
+
+      let tipoIvaClienteNC = '';
+      let direccionClienteNC = '';
+      let cuitClienteNC = '';
+      if (guidCliente && guidCliente !== EMPTY_GUID) {
+        const cliNCResult = await tx.request()
+          .input('guidCli', sql.Char(16), guidCliente)
+          .query(`SELECT TIPO_IVA, DIRECCION, CUIT FROM Clientes WHERE GUID = @guidCli`);
+        const cliNC = cliNCResult.recordset[0];
+        if (cliNC) {
+          tipoIvaClienteNC = (cliNC.TIPO_IVA || '').trim();
+          direccionClienteNC = (cliNC.DIRECCION || '').trim();
+          cuitClienteNC = (cliNC.CUIT || '').trim();
+        }
+      }
+
+      const sucNCResult = await tx.request()
+        .input('guidSuc', sql.Char(16), guidSucursal)
+        .query(`SELECT PUNTOVENTA, ULTIMANOTACREDITOA, ULTIMANOTACREDITOB, GUIDCONFIGURACION, IDCOMPROBANTENCDA, IDCOMPROBANTENCDB FROM Sucursales WHERE GUID = @guidSuc`);
+      const sucNC = sucNCResult.recordset[0] || {};
+      const pvNC = sucNC.PUNTOVENTA || 1;
+      const ultimaNCCambio = esNCACambio ? (sucNC.ULTIMANOTACREDITOA || 0) : (sucNC.ULTIMANOTACREDITOB || 0);
+      const numeroNCCambio = ultimaNCCambio + 1;
+      const guidConfigNC = sucNC.GUIDCONFIGURACION || EMPTY_GUID;
+      const idCompNC = esNCACambio ? (sucNC.IDCOMPROBANTENCDA || 3) : (sucNC.IDCOMPROBANTENCDB || 8);
+      const numNCCambioStr = `${String(pvNC).padStart(4, '0')}-${String(numeroNCCambio).padStart(8, '0')}`;
+
+      let totalNeto21NC, totalIva21NC;
+      if (esNCACambio) {
+        totalNeto21NC = Math.round((totalCambio / 1.21) * 100) / 100;
+        totalIva21NC = Math.round((totalNeto21NC * 0.21) * 100) / 100;
+      } else {
+        totalNeto21NC = totalCambio;
+        totalIva21NC = 0;
+      }
+
+      await tx.request()
+        .input('guid', sql.Char(16), guidNotaCreditoCambio)
+        .input('guidCliente', sql.Char(16), guidCliente || EMPTY_GUID)
+        .input('guidConfig', sql.Char(16), guidConfigNC)
+        .input('ts', sql.Float, ts)
+        .input('sts', sql.Float, ts)
+        .input('codConfig', sql.Int, 1)
+        .input('codImputacion', sql.Int, 0)
+        .input('codVendedor', sql.Int, 0)
+        .input('codDocAfip', sql.Decimal(3), codDocAfipNC)
+        .input('codConceptoAfip', sql.Decimal(3), 1)
+        .input('idComp', sql.Int, idCompNC)
+        .input('numFactura', sql.Char(13), numNCCambioStr)
+        .input('puntoVenta', sql.Int, pvNC)
+        .input('numero', sql.Int, numeroNCCambio)
+        .input('numeroHasta', sql.Int, numeroNCCambio)
+        .input('tipoComp', sql.Char(3), tipoCompNC)
+        .input('tipoFactura', sql.Char(1), tipoFacturaOrigCambio)
+        .input('tipoIva', sql.NVarChar, tipoIvaClienteNC || null)
+        .input('fecha', sql.Decimal(7), dateToClarion())
+        .input('fechaVencimiento', sql.Date, todayAR())
+        .input('fechaServDesde', sql.Date, todayAR())
+        .input('fechaServHasta', sql.Date, todayAR())
+        .input('nombre', sql.Char(100), nombre || 'CONSUMIDOR FINAL')
+        .input('direccion', sql.NVarChar, direccionClienteNC || null)
+        .input('cuit', sql.Char(13), cuitClienteNC)
+        .input('total', sql.Decimal(15, 2), totalCambio)
+        .input('neto21', sql.Decimal(15, 2), totalNeto21NC)
+        .input('iva21', sql.Decimal(15, 2), totalIva21NC)
+        .input('pendiente', sql.TinyInt, 0)
+        .input('dateAdded', sql.Int, dateToInt())
+        .input('timeAdded', sql.Int, timeToInt())
+        .query(`
+          INSERT INTO Facturas (GUID, GUIDCLIENTES, GUIDREMITOS, GUIDCONFIGURACION, ts, sts,
+            CODIGO_CONFIGURACION, CODIGO_IMPUTACION, CODIGO_VENDEDOR,
+            CODIGO_DOCUMENTO_AFIP, CODIGO_CONCEPTO_AFIP, IDCOMP,
+            NUMERO_FACTURA, PUNTOVENTA, NUMERO, NUMEROHASTA,
+            TIPO_COMPROBANTE, TIPO_FACTURA, TIPO_IVA, FECHA, FECHA_VENCIMIENTO,
+            FECHASERVDESDE, FECHASERVHASTA, NOMBRE, DIRECCION, CUIT,
+            TOTAL, TOTAL_NETO21, TOTAL_IVA21, TOTAL_NETO0, TOTAL_IVA0,
+            TOTAL_EXENTO, TOTAL_NOGRAVADO, PENDIENTE,
+            DATEADDED, TIMEADDED)
+          VALUES (@guid, @guidCliente, '', @guidConfig, @ts, @sts,
+            @codConfig, @codImputacion, @codVendedor,
+            @codDocAfip, @codConceptoAfip, @idComp,
+            @numFactura, @puntoVenta, @numero, @numeroHasta,
+            @tipoComp, @tipoFactura, @tipoIva, @fecha, @fechaVencimiento,
+            @fechaServDesde, @fechaServHasta, @nombre, @direccion, @cuit,
+            @total, @neto21, @iva21, 0, 0,
+            0, 0, @pendiente,
+            @dateAdded, @timeAdded)
+        `);
+
+      await tx.request()
+        .input('guidSuc', sql.Char(16), guidSucursal)
+        .input('numero', sql.Int, numeroNCCambio)
+        .query(esNCACambio
+          ? `UPDATE Sucursales SET ULTIMANOTACREDITOA = @numero WHERE GUID = @guidSuc`
+          : `UPDATE Sucursales SET ULTIMANOTACREDITOB = @numero WHERE GUID = @guidSuc`
+        );
+
+      await tx.request()
+        .input('guidCambio', sql.Char(16), guidRemitoCambio)
+        .input('guidFactura', sql.Char(16), guidNotaCreditoCambio)
+        .query(`UPDATE RemitosCambios SET GUIDFACTURAS = @guidFactura WHERE GUID = @guidCambio`);
+
+      notaCreditoNumero = numNCCambioStr;
+      guidNotaCreditoCambioResult = guidNotaCreditoCambio;
     }
 
     // ================================================================
@@ -998,6 +1157,13 @@ async function CreateCambioConVenta({
       facturaNumero = numFacStr;
     }
 
+    // Recalcular saldo del cliente via SP
+    if (guidCliente && guidCliente !== EMPTY_GUID) {
+      await tx.request()
+        .input('guid', sql.Char(16), guidCliente)
+        .query(`EXEC SP_RecalcularSaldoCliente @GuidCliente = @guid`);
+    }
+
     await tx.commit();
     return {
       guidCambio: guidRemitoCambio,
@@ -1009,6 +1175,8 @@ async function CreateCambioConVenta({
       saldoAFavor: diferencia < -0.01 ? Math.abs(diferencia) : 0,
       formaPago: diferencia > 0.01 ? ((pagos && pagos.length > 0) ? pagos.map(p => p.tipo).join(', ') : tipoPago) : 'Sin cobro',
       factura: facturaNumero,
+      notaCredito: notaCreditoNumero,
+      guidNotaCredito: guidNotaCreditoCambioResult,
     };
   } catch (err) {
     try { await tx.rollback(); } catch (_) {}
@@ -1174,10 +1342,13 @@ async function GetCambioDetalle(guidRemitoCambio) {
     .input('guid', sql.Char(16), guidRemitoCambio)
     .query(`
       SELECT rc.*, RTRIM(s.NOMBRE) AS Sucursal, s.PUNTOVENTA,
-             c.NOMBRE AS ClienteNombre, c.CUIT AS ClienteCuit
+             c.NOMBRE AS ClienteNombre, c.CUIT AS ClienteCuit,
+             f.NUMERO_FACTURA AS NotaCreditoNumero, f.TIPO_COMPROBANTE AS NotaCreditoTipo,
+             RTRIM(rc.GUIDFACTURAS) AS GuidNotaCredito
       FROM RemitosCambios rc
       LEFT JOIN Sucursales s ON s.GUID = rc.GUIDSUCURSALES
       LEFT JOIN Clientes c ON c.GUID = rc.GUIDCLIENTES
+      LEFT JOIN Facturas f ON f.GUID = rc.GUIDFACTURAS AND rc.GUIDFACTURAS <> ''
       WHERE rc.GUID = @guid
     `);
 
