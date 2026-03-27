@@ -714,23 +714,7 @@ const POS = {
     POS.pagos.push(pago);
     document.getElementById('pagoImporte').value = '';
 
-    // Si credito cubre todo el total (restante = 0), agregar pago EFECTIVO $0 automaticamente
-    if (esCreditoDev) {
-      const totalFinal = POS._totalConRecargo > 0 ? POS._totalConRecargo : (POS._cambioData && POS._cambioData.diferencia > 0 ? POS._cambioData.diferencia : POS.GetTotal());
-      const totalPagosActual = POS.GetTotalPagos();
-      if (Math.abs(totalFinal - totalPagosActual) < 0.01) {
-        const efectivoTipo = State.tiposCobrosPagos.find(t => (t.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO');
-        if (efectivoTipo) {
-          const cuentaCaja = GetCuentaCajaSucursal();
-          POS.pagos.push({
-            tipo: efectivoTipo.GUID.trim(), tipoNombre: 'EFECTIVO', importe: 0, descripcion: 'EFECTIVO',
-            guidBanco: cuentaCaja ? (cuentaCaja.GUIDBANCOS || '').trim() : '',
-            guidBancosCuentas: cuentaCaja ? cuentaCaja.GUID.trim() : '',
-            _esEfectivo: true, _esCtaCte: false, _esCreditoDev: false, _esCheque3ro: false, _esTarjeta: false,
-          });
-        }
-      }
-    }
+    // Crédito devolución que cubre el total: no se necesita pago adicional
 
     // Si el pago requiere factura, activarla automáticamente
     if (!esEfectivo && !esCtaCte && !esCreditoDev) {
@@ -1063,7 +1047,7 @@ async function SeleccionarArticuloSugerido(idx) {
   document.getElementById('tallesContainer').innerHTML = '';
   document.getElementById('posSearch').value = '';
   try {
-    const movs = await API.GetMovimientoArticulos(art.GUID);
+    const movs = await API.GetMovimientoArticulos((art.GUID || '').trim());
     if (movs.length === 0) {
       POS.AgregarItem(art, null);
     } else {
@@ -2794,13 +2778,14 @@ async function SeleccionarVentaDev(guid) {
       return;
     }
     const esCF = EsConsumidorFinal(r.NOMBRE, r.GUIDCLIENTES);
+    const clienteActual = !esCF ? { nombre: (r.NOMBRE || '').trim(), guid: (r.GUIDCLIENTES || '').trim() } : null;
     const form = document.getElementById('devFormulario');
     form.classList.remove('d-none');
     form.innerHTML = `
       <div class="card shadow-sm border-danger">
         <div class="card-header bg-danger text-white"><h6 class="mb-0"><i class="bi bi-arrow-return-left me-2"></i>Seleccione articulos a devolver</h6></div>
         <div class="card-body">
-          ${esCF ? RenderClienteSelectorHTML('dev') : ''}
+          ${RenderClienteSelectorHTML('dev', clienteActual)}
           <div class="row g-3 mb-3">
             <div class="col-md-6">
               <label class="form-label fw-semibold">Tipo de devolucion <span class="text-danger">*</span></label>
@@ -2840,7 +2825,11 @@ async function SeleccionarVentaDev(guid) {
         </div>
       </div>
     `;
-    if (esCF) InitClienteSelectorEvents('dev');
+    InitClienteSelectorEvents('dev');
+    // Si ya tiene cliente, pre-seleccionarlo
+    if (clienteActual) {
+      _devCambioCliente = { GUID: clienteActual.guid, NOMBRE: clienteActual.nombre };
+    }
     form.scrollIntoView({ behavior: 'smooth' });
   } catch (err) {
     ShowToast('Error', err.message, 'error');
@@ -2855,21 +2844,60 @@ function EsConsumidorFinal(nombre, guidCliente) {
   return !guidCliente || guidCliente.trim() === '' || n === 'CONSUMIDOR FINAL' || n === '';
 }
 
-function RenderClienteSelectorHTML(idPrefix) {
+function RenderClienteSelectorHTML(idPrefix, clienteActual) {
+  const tieneCliente = clienteActual && clienteActual.nombre && clienteActual.nombre.trim() !== '';
   return `
     <div class="card border-warning mb-3" id="${idPrefix}ClienteZona">
       <div class="card-body">
-        <h6 class="card-title text-warning"><i class="bi bi-exclamation-triangle me-2"></i>Cliente requerido</h6>
-        <p class="small text-muted mb-2">La venta original es de Consumidor Final. Debe asignar un cliente para esta operacion.</p>
-        <div class="input-group mb-2">
-          <span class="input-group-text"><i class="bi bi-search"></i></span>
-          <input type="text" id="${idPrefix}BuscarCliente" class="form-control" placeholder="Buscar cliente por nombre o CUIT...">
+        <h6 class="card-title text-warning"><i class="bi bi-person-exclamation me-2"></i>Cliente requerido</h6>
+        <p class="small text-muted mb-2">Debe asignar un cliente para esta operacion (obligatorio para cuenta corriente).</p>
+        <div id="${idPrefix}ClienteSeleccionado" class="${tieneCliente ? '' : 'd-none'}">
+          <div class="alert alert-success py-2 mb-0 d-flex align-items-center">
+            <i class="bi bi-person-check me-1"></i><strong id="${idPrefix}ClienteNombre">${tieneCliente ? clienteActual.nombre : ''}</strong>
+            <button class="btn btn-sm btn-outline-danger ms-auto" onclick="LimpiarClienteDevCambio('${idPrefix}')"><i class="bi bi-x me-1"></i>Cambiar</button>
+          </div>
         </div>
-        <div id="${idPrefix}ListaClientes" class="list-group mb-2" style="max-height:200px; overflow-y:auto;"></div>
-        <div id="${idPrefix}ClienteSeleccionado" class="d-none">
-          <div class="alert alert-success py-2 mb-0">
-            <i class="bi bi-person-check me-1"></i><strong id="${idPrefix}ClienteNombre"></strong>
-            <button class="btn btn-sm btn-outline-danger ms-2" onclick="LimpiarClienteDevCambio('${idPrefix}')"><i class="bi bi-x"></i></button>
+        <div id="${idPrefix}BuscarZona" class="${tieneCliente ? 'd-none' : ''}">
+          <div class="input-group mb-2">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="${idPrefix}BuscarCliente" class="form-control" placeholder="Buscar cliente por nombre o CUIT...">
+            <button class="btn btn-outline-success" type="button" onclick="ToggleNuevoClienteDevCambio('${idPrefix}')"><i class="bi bi-person-plus me-1"></i>Nuevo</button>
+          </div>
+          <div id="${idPrefix}ListaClientes" class="list-group mb-2" style="max-height:200px; overflow-y:auto;"></div>
+          <div id="${idPrefix}NuevoClienteForm" class="d-none">
+            <div class="card border-success mt-2">
+              <div class="card-body py-2">
+                <h6 class="fw-semibold mb-2"><i class="bi bi-person-plus me-1"></i>Nuevo Cliente</h6>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label class="form-label small mb-1">Nombre <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control form-control-sm" id="${idPrefix}NcNombre" maxlength="255">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label small mb-1">Documento</label>
+                    <input type="text" class="form-control form-control-sm" id="${idPrefix}NcDocumento" placeholder="Ej: 30.123.456" maxlength="12">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label small mb-1">CUIT</label>
+                    <input type="text" class="form-control form-control-sm" id="${idPrefix}NcCuit" placeholder="Ej: 20-12345678-9" maxlength="13">
+                  </div>
+                </div>
+                <div class="row g-2 mt-1">
+                  <div class="col-md-4">
+                    <label class="form-label small mb-1">Email <span class="text-danger">*</span></label>
+                    <input type="email" class="form-control form-control-sm" id="${idPrefix}NcEmail" maxlength="255">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label small mb-1">Celular <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control form-control-sm" id="${idPrefix}NcCelular" placeholder="Min. 10 digitos" maxlength="20">
+                  </div>
+                  <div class="col-md-4 d-flex align-items-end gap-2">
+                    <button class="btn btn-success btn-sm" onclick="GuardarNuevoClienteDevCambio('${idPrefix}')"><i class="bi bi-check-circle me-1"></i>Guardar</button>
+                    <button class="btn btn-secondary btn-sm" onclick="ToggleNuevoClienteDevCambio('${idPrefix}')">Cancelar</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2909,8 +2937,10 @@ function SeleccionarClienteDevCambio(idPrefix, cliente) {
     return;
   }
   _devCambioCliente = cliente;
-  document.getElementById(`${idPrefix}ListaClientes`).innerHTML = '';
-  document.getElementById(`${idPrefix}BuscarCliente`).closest('.input-group').classList.add('d-none');
+  const lista = document.getElementById(`${idPrefix}ListaClientes`);
+  if (lista) lista.innerHTML = '';
+  const buscarZona = document.getElementById(`${idPrefix}BuscarZona`);
+  if (buscarZona) buscarZona.classList.add('d-none');
   const sel = document.getElementById(`${idPrefix}ClienteSeleccionado`);
   sel.classList.remove('d-none');
   document.getElementById(`${idPrefix}ClienteNombre`).textContent = (cliente.NOMBRE || '').trim();
@@ -2918,10 +2948,50 @@ function SeleccionarClienteDevCambio(idPrefix, cliente) {
 
 function LimpiarClienteDevCambio(idPrefix) {
   _devCambioCliente = null;
-  document.getElementById(`${idPrefix}BuscarCliente`).closest('.input-group').classList.remove('d-none');
-  document.getElementById(`${idPrefix}BuscarCliente`).value = '';
+  const buscarZona = document.getElementById(`${idPrefix}BuscarZona`);
+  if (buscarZona) buscarZona.classList.remove('d-none');
+  const buscarInput = document.getElementById(`${idPrefix}BuscarCliente`);
+  if (buscarInput) buscarInput.value = '';
   document.getElementById(`${idPrefix}ClienteSeleccionado`).classList.add('d-none');
-  document.getElementById(`${idPrefix}ListaClientes`).innerHTML = '';
+  const lista = document.getElementById(`${idPrefix}ListaClientes`);
+  if (lista) lista.innerHTML = '';
+}
+
+function ToggleNuevoClienteDevCambio(idPrefix) {
+  const form = document.getElementById(`${idPrefix}NuevoClienteForm`);
+  if (!form) return;
+  form.classList.toggle('d-none');
+}
+
+async function GuardarNuevoClienteDevCambio(idPrefix) {
+  const nombre = (document.getElementById(`${idPrefix}NcNombre`).value || '').trim();
+  const documento = (document.getElementById(`${idPrefix}NcDocumento`).value || '').trim();
+  const cuit = (document.getElementById(`${idPrefix}NcCuit`).value || '').trim();
+  const email = (document.getElementById(`${idPrefix}NcEmail`).value || '').trim();
+  const celular = (document.getElementById(`${idPrefix}NcCelular`).value || '').trim();
+
+  if (!nombre) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
+  if (!documento && !cuit) { ShowToast('Error', 'Debe ingresar Documento o CUIT', 'error'); return; }
+  if (documento && !ValidarDocumento(documento)) { ShowToast('Error', 'Documento invalido. Debe ser mayor a 1.000.000', 'error'); return; }
+  if (cuit && !ValidarCuit(cuit)) { ShowToast('Error', 'CUIT invalido. Formato: 99-99999999-9', 'error'); return; }
+  if (!email) { ShowToast('Error', 'El email es obligatorio', 'error'); return; }
+  if (!ValidarEmail(email)) { ShowToast('Error', 'Email invalido', 'error'); return; }
+  if (!celular) { ShowToast('Error', 'El celular es obligatorio', 'error'); return; }
+  if (!ValidarCelular(celular)) { ShowToast('Error', 'Celular invalido. Minimo 10 digitos', 'error'); return; }
+
+  try {
+    const result = await API.CreateCliente({
+      nombre, documento: documento.replace(/\./g, ''), cuit, direccion: '', email, celular,
+      tipoIva: 'CONSUMIDOR FINAL', tipoFactura: 'B', codigoDocumentoAfip: 96
+    });
+    ShowToast('Cliente', 'Creado exitosamente', 'success');
+    const nuevoCliente = await API.GetClienteByGuid(result.guid);
+    if (nuevoCliente) {
+      SeleccionarClienteDevCambio(idPrefix, nuevoCliente);
+    }
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
 }
 
 function ToggleAllDev(checked) {
@@ -2929,14 +2999,14 @@ function ToggleAllDev(checked) {
 }
 
 async function ConfirmarDevolucion(guidRemitoOriginal, originalItems, guidCliente, nombre) {
-  // Validar cliente si el original es Consumidor Final
-  if (EsConsumidorFinal(nombre, guidCliente)) {
-    if (!_devCambioCliente) {
-      ShowToast('Aviso', 'Debe seleccionar un cliente para la devolucion', 'error');
-      return;
-    }
+  // Las devoluciones SIEMPRE requieren cliente (queda como credito en CTA CTE)
+  if (_devCambioCliente) {
     guidCliente = _devCambioCliente.GUID;
     nombre = (_devCambioCliente.NOMBRE || '').trim();
+  }
+  if (!guidCliente || guidCliente.trim() === '') {
+    ShowToast('Aviso', 'Debe seleccionar un cliente para la devolucion (obligatorio para cuenta corriente)', 'error');
+    return;
   }
 
   const checks = document.querySelectorAll('.devCheck:checked');
@@ -3497,13 +3567,14 @@ async function SeleccionarVentaCambio(guid) {
       return;
     }
     const esCF = EsConsumidorFinal(r.NOMBRE, r.GUIDCLIENTES);
+    const clienteActualCamb = !esCF ? { nombre: (r.NOMBRE || '').trim(), guid: (r.GUIDCLIENTES || '').trim() } : null;
     const form = document.getElementById('cambFormulario');
     form.classList.remove('d-none');
     form.innerHTML = `
       <div class="card shadow-sm border-warning">
         <div class="card-header bg-warning text-dark"><h6 class="mb-0"><i class="bi bi-arrow-repeat me-2"></i>Seleccione articulos a cambiar</h6></div>
         <div class="card-body">
-          ${esCF ? RenderClienteSelectorHTML('camb') : ''}
+          ${RenderClienteSelectorHTML('camb', clienteActualCamb)}
           <div class="row g-3 mb-3">
             <div class="col-md-6">
               <label class="form-label fw-semibold">Tipo de cambio <span class="text-danger">*</span></label>
@@ -3543,7 +3614,10 @@ async function SeleccionarVentaCambio(guid) {
         </div>
       </div>
     `;
-    if (esCF) InitClienteSelectorEvents('camb');
+    InitClienteSelectorEvents('camb');
+    if (clienteActualCamb) {
+      _devCambioCliente = { GUID: clienteActualCamb.guid, NOMBRE: clienteActualCamb.nombre };
+    }
     form.scrollIntoView({ behavior: 'smooth' });
   } catch (err) {
     ShowToast('Error', err.message, 'error');
@@ -3555,14 +3629,14 @@ function ToggleAllCambio(checked) {
 }
 
 function PrepararCambioParaPOS(guidRemitoOriginal, originalItems, guidCliente, nombre) {
-  // Validar cliente si el original es Consumidor Final
-  if (EsConsumidorFinal(nombre, guidCliente)) {
-    if (!_devCambioCliente) {
-      ShowToast('Aviso', 'Debe seleccionar un cliente para el cambio', 'error');
-      return;
-    }
+  // Los cambios SIEMPRE requieren cliente (queda en CTA CTE)
+  if (_devCambioCliente) {
     guidCliente = _devCambioCliente.GUID;
     nombre = (_devCambioCliente.NOMBRE || '').trim();
+  }
+  if (!guidCliente || guidCliente.trim() === '') {
+    ShowToast('Aviso', 'Debe seleccionar un cliente para el cambio (obligatorio para cuenta corriente)', 'error');
+    return;
   }
 
   const checks = document.querySelectorAll('.cambCheck:checked');
@@ -4968,46 +5042,41 @@ async function CargarDeudaActiva(guid) {
               <th class="text-end">Original</th>
               <th class="text-end">Pagado</th>
               <th class="text-end">Pendiente</th>
-              <th class="text-center">A cobrar</th>
             </tr>
           </thead>
           <tbody>
             ${deudas.map((d, i) => {
               const debe = d.DEBE || 0;
               const haber = d.HABER || 0;
-              const totalParcial = d.TOTALPARCIAL || 0;
-              const pendiente = d.PENDIENTE != null ? d.PENDIENTE : (debe - haber);
-              const neto = debe > 0 ? pendiente : -haber;
-              totalDeuda += neto;
               const factura = (d.NUMERO_FACTURA || '').trim();
               const facTipo = (d.FacturaTipo || '').trim();
               const esCredito = haber > 0 && debe === 0;
               const badgeColor = esCredito ? 'success' : 'info text-dark';
-              const parcialInfo = totalParcial > 0 ? ` <small class="text-muted">(pagado: ${FormatMoney(totalParcial)})</small>` : '';
-              const original = debe > 0 ? debe : haber;
+              const creditoOrig = d.CreditoOriginal || 0;
+              const creditoUsado = d.CreditoUsado || 0;
+              const original = esCredito && creditoOrig > 0 ? creditoOrig : (debe > 0 && haber > 0 ? debe - haber : (debe > 0 ? debe : haber));
+              const pagado = esCredito ? creditoUsado : 0;
+              const pendiente = original - pagado;
+              const signo = esCredito ? -1 : 1;
+              totalDeuda += pendiente * signo;
               return `<tr class="${esCredito ? 'table-success' : ''}">
-                <td><input type="checkbox" class="deudaCheck" data-idx="${i}" data-guid="${(d.GUID || '').trim()}" data-max="${neto}" data-factura="${(d.NUMERO_FACTURA || '').trim()}" onchange="OnDeudaCheckChange(this)"></td>
+                <td><input type="checkbox" class="deudaCheck" data-idx="${i}" data-guid="${(d.GUID || '').trim()}" data-max="${pendiente * signo}" data-factura="${factura}" onchange="OnDeudaCheckChange(this)"></td>
                 <td>${FormatFechaInt(d.FECHA)}</td>
-                <td class="small">${(d.DESCRIPCION || '').trim()}</td>
+                <td class="small">${(d.CONCEPTO || '').trim()}</td>
                 <td>${factura ? `<span class="badge bg-${badgeColor}">${facTipo} ${factura}</span>` : '<span class="text-muted">-</span>'}</td>
-                <td class="text-end ${debe > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(original)}</td>
-                <td class="text-end">${totalParcial > 0 ? FormatMoney(totalParcial) : '<span class="text-muted">-</span>'}</td>
-                <td class="text-end fw-semibold ${neto > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(Math.abs(neto))}</td>
-                <td class="text-center">
-                  <input type="number" class="form-control form-control-sm deudaCobrar d-inline-block d-none" style="width:100px"
-                    data-idx="${i}" value="${Math.abs(neto).toFixed(2)}" min="0.01" max="${Math.abs(neto).toFixed(2)}" step="0.01"
-                    onchange="ActualizarTotalDeudaSel()">
-                </td>
+                <td class="text-end ${esCredito ? 'text-success' : 'text-danger'}">${FormatMoney(original)}</td>
+                <td class="text-end">${pagado > 0 ? FormatMoney(pagado) : '<span class="text-muted">-</span>'}</td>
+                <td class="text-end fw-semibold ${esCredito ? 'text-success' : 'text-danger'}">${FormatMoney(pendiente)}</td>
               </tr>`;
             }).join('')}
           </tbody>
           <tfoot class="table-light">
             <tr class="fw-bold">
-              <td colspan="7" class="text-end">Saldo deuda activa:</td>
+              <td colspan="6" class="text-end">Saldo deuda activa:</td>
               <td class="text-end ${totalDeuda > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(totalDeuda)}</td>
             </tr>
             <tr id="deudaSelTotal" class="d-none fw-bold">
-              <td colspan="7" class="text-end">Total a cobrar:</td>
+              <td colspan="6" class="text-end">Total a cobrar:</td>
               <td class="text-end text-primary" id="deudaSelImporte"></td>
             </tr>
           </tfoot>
@@ -5181,17 +5250,12 @@ async function CargarMovimientosCliente(guid) {
         ${saldoAnteriorRow ? saldoAnteriorRow.replace('</tr>', '<td></td></tr>') : ''}
         ${movs.map(m => {
           const debe = m.DEBE || 0; const haber = m.HABER || 0;
-          const totalParcial = m.TOTALPARCIAL || 0;
-          const fp = (m.GUIDFORMAPAGOS || '').trim();
-          const pagado = fp && fp !== '';
-          if (!pagado) saldoAcum += (debe - totalParcial) - haber;
-          const parcialInfo = totalParcial > 0 ? ` <small class="text-muted">(a cuenta: ${FormatMoney(totalParcial)})</small>` : '';
-          const estadoBadge = pagado
-            ? '<span class="badge bg-success">Pagado</span>'
-            : totalParcial > 0
-              ? '<span class="badge bg-info text-dark">Parcial</span>'
-              : '<span class="badge bg-warning text-dark">Pendiente</span>';
-          return `<tr class="${pagado ? 'text-muted' : ''}"><td>${FormatFechaInt(m.FECHA)}</td><td class="small">${(m.DESCRIPCION || '').trim()}${parcialInfo}</td><td class="text-end ${!pagado && debe > 0 ? 'text-danger' : ''}">${debe > 0 ? FormatMoney(debe) : ''}</td><td class="text-end ${!pagado && haber > 0 ? 'text-success' : ''}">${haber > 0 ? FormatMoney(haber) : ''}</td><td>${estadoBadge}</td><td class="text-end fw-semibold ${saldoAcum > 0 ? 'text-danger' : saldoAcum < 0 ? 'text-success' : ''}">${FormatMoney(saldoAcum)}</td></tr>`;
+          const conciliado = m.CONCILIADO === 1;
+          saldoAcum += debe - haber;
+          const estadoBadge = conciliado
+            ? '<span class="badge bg-success">Conciliado</span>'
+            : '<span class="badge bg-warning text-dark">Pendiente</span>';
+          return `<tr class="${conciliado ? 'text-muted' : ''}"><td>${FormatFechaInt(m.FECHA)}</td><td class="small">${(m.CONCEPTO || '').trim()}</td><td class="text-end ${!conciliado && debe > 0 ? 'text-danger' : ''}">${debe > 0 ? FormatMoney(debe) : ''}</td><td class="text-end ${!conciliado && haber > 0 ? 'text-success' : ''}">${haber > 0 ? FormatMoney(haber) : ''}</td><td>${estadoBadge}</td><td class="text-end fw-semibold ${saldoAcum > 0 ? 'text-danger' : saldoAcum < 0 ? 'text-success' : ''}">${FormatMoney(saldoAcum)}</td></tr>`;
         }).join('')}
       </tbody><tfoot class="table-light"><tr class="fw-bold"><td colspan="5" class="text-end">Saldo:</td><td class="text-end ${saldoAcum > 0 ? 'text-danger' : 'text-success'}">${FormatMoney(saldoAcum)}</td></tr></tfoot></table>`;
     }

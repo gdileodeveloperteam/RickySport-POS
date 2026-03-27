@@ -1,0 +1,968 @@
+ALTER TABLE [dbo].[Bancos] ADD [CUENTANUMERO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+/*
+ALTER TABLE [dbo].[Bancos] ADD [BANCO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL 
+GO
+
+update [dbo].[Bancos] set BANCO = NOMBRE
+GO
+
+ALTER TABLE [dbo].[Bancos] ALTER COLUMN [BANCO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL
+GO
+
+*/
+
+ALTER TABLE [dbo].[Bancos] ADD [SALDO] decimal(13,2)  NULL
+GO
+
+ALTER TABLE [dbo].[Bancos] ADD [TIPOCUENTA] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Bancos] ALTER COLUMN [ID] int NULL
+GO
+
+/*ALTER TABLE [dbo].[Bancos] ALTER COLUMN [NOMBRE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS NULL
+GO
+
+EXEC sp_rename '[dbo].[PK__Bancos__15B69B8E23C535EA]', 'PK__Bancos__15B69B8EC46E38F2', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[Bancos] ADD CONSTRAINT [UQ__Bancos__55A059988BC45C0C] UNIQUE NONCLUSTERED ([CUENTANUMERO] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+EXEC sp_rename '[dbo].[PK__BancosCo__15B69B8E97FDB080]', 'PK__BancosCo__15B69B8EB434E3C9', 'OBJECT'
+GO
+*/
+ALTER TABLE [dbo].[BancosCuentas] ALTER COLUMN [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL
+GO
+
+ALTER TABLE [dbo].[BancosCuentas] ALTER COLUMN [GUIDCONFIGURACION] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NULL
+GO
+
+EXEC sp_rename 'BancosCuentas.GUIDBANCO', 'GUIDBANCOS', 'COLUMN'
+GO 
+/*
+EXEC sp_rename '[dbo].[PK__BancosCu__15B69B8E6CE77106]', 'PK_BancosCuentas_GUID', 'OBJECT'
+GO
+*/
+ALTER TABLE [dbo].[CajaDiaria] ADD [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[CajaDiaria] ADD [GUIDUSUARIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[CajaGastos] ADD [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[CajaGastos] ADD [GUIDCAJADIARIA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[CajaGastos] ADD [GUIDUSUARIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+/*
+EXEC sp_rename '[dbo].[PK__Comproba__15B69B8E029DBC32]', 'PK__Comproba__15B69B8E62787FC3', 'OBJECT'
+GO
+
+EXEC sp_rename '[dbo].[PK__Comproba__15B69B8E61EE77E2]', 'PK__Comproba__15B69B8E665D0A5C', 'OBJECT'
+GO
+*/
+EXEC sp_rename 'ConceptosPorBanco.GUIDBANCO', 'GUIDBANCOS', 'COLUMN'
+GO
+/*
+EXEC sp_rename '[dbo].[PK__Concepto__15B69B8E028A0ADC]', 'PK__Concepto__15B69B8EBDC68CAA', 'OBJECT'
+GO
+*/
+CREATE TABLE [dbo].[CondicionArticulos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [ESTADO] varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  CONSTRAINT [PK_CondicionArticulos] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [UQ_CondicionArticulos_Estado] UNIQUE NONCLUSTERED ([ESTADO] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [UQ_CondicionArticulos_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[CondicionArticulos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [CODIGO_CONFIGURACION] int  NOT NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [IDEMPRESA] char(3) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [INICIOACTIVIDAD] date  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [PUERTOMAIL] char(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [SERVIDORMAIL] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [CLAVEMAIL] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [USUARIOMAIL] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [SSLMAIL] tinyint  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [TLSMAIL] tinyint  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [LINEA1] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [LINEA2] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [LINEA3] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [RUTA] varchar(499) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [PAGADO] tinyint  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [FORMAPAGO] char(60) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [FECHAPAGO] int  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [FECHA_INICIO] int  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [FECHA_NOW] int  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [VOLSERIALNO] char(100) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [COMPUTADORANOMBRE] char(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [ALICUOTAINGRESOSBRUTOS] decimal(7,2)  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [IDPLANCUENTASVENTA] int  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [IDPLANCUENTASCOMPRAS] int  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ADD [CBU] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Configuracion] ALTER COLUMN [ID] int NULL
+GO
+/*
+ALTER TABLE [dbo].[Configuracion] DROP COLUMN [linea1]
+GO
+
+ALTER TABLE [dbo].[Configuracion] DROP COLUMN [linea2]
+GO
+
+ALTER TABLE [dbo].[Configuracion] DROP COLUMN [linea3]
+GO
+
+EXEC sp_rename '[dbo].[PK__Configur__15B69B8E73D56A46]', 'PK__Configur__15B69B8EECD0EBC5', 'OBJECT'
+GO */
+
+CREATE TABLE [dbo].[CreditosDevoluciones] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDCLIENTES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDSUCURSALES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [FECHA] date  NOT NULL,
+  [MONTOORIGINAL] decimal(13,3)  NOT NULL,
+  [MONTOUSADO] decimal(13,3) DEFAULT 0 NOT NULL,
+  [ESTADO] varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'ACTIVO' NOT NULL,
+  [ts] float(53)  NOT NULL,
+  [sts] float(53)  NOT NULL,
+  [dts] float(53)  NULL,
+  CONSTRAINT [PK_CreditosDevoluciones] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [UQ_CreditosDevoluciones_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[CreditosDevoluciones] SET (LOCK_ESCALATION = TABLE)
+GO
+
+CREATE TABLE [dbo].[CreditosDevolucionesUsos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDCREDITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [MONTOUSADO] decimal(13,3)  NOT NULL,
+  [FECHA] date  NOT NULL,
+  [ts] float(53)  NOT NULL,
+  [sts] float(53)  NOT NULL,
+  [dts] float(53)  NULL,
+  CONSTRAINT [PK_CreditosDevolucionesUsos] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [UQ_CreditosDevolucionesUsos_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+ALTER TABLE [dbo].[Facturas] ALTER COLUMN [TIPO_IVA] char(30) COLLATE SQL_Latin1_General_CP1_CI_AS NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [CODIGO_REMITO] smallint  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [DATEADDED] int  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [TIMEADDED] int  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [USERADDED] int  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [DATECHANGED] int  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [TIMECHANGED] int  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [USERCHANGED] int  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [Codigo_ComprobanteAfip] int  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [Recargo] decimal(13,2)  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [Descuento] decimal(13,2)  NULL
+GO
+
+ALTER TABLE [dbo].[Facturas] ADD [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+
+EXEC sp_rename 'Facturas.DECAE', 'CAE', 'COLUMN'
+GO
+
+EXEC sp_rename 'Facturas.FECAE', 'FECHAVENCIMIENTOCAE', 'COLUMN'
+GO
+
+ALTER TABLE [dbo].[Facturas] DROP COLUMN [CODIGO_COMPROBANTEAFIP]
+GO
+
+ALTER TABLE [dbo].[Facturas] DROP COLUMN [RECARGO]
+GO
+
+ALTER TABLE [dbo].[Facturas] DROP COLUMN [DESCUENTO]
+GO
+/*
+EXEC sp_rename '[dbo].[PK__Facturas__15B69B8E275B9E0E]', 'PK__Facturas__73C59E9F678A7DAD', 'OBJECT'
+GO
+*/
+ALTER TABLE [dbo].[Facturas] ADD UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+/* ALTER TABLE [dbo].[Facturas] ADD CONSTRAINT [UQ__Facturas__15B69B8F7B67DC8A] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] DROP CONSTRAINT [UQ__Facturas__ABF5154A37420303]
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [REMITONUMERO] char(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [FECHA] int  NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [RETENCIONIVA] tinyint  NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [RETENCIONBRUTOS] tinyint  NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [RETENCIONGANANCIA] tinyint  NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [EXENTO] decimal(13,2)  NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [PAGADA] tinyint  NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD [TIPO] char(3) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ALTER COLUMN [ID] int NULL
+GO
+
+EXEC sp_rename '[dbo].[PK__Facturas__15B69B8E8722D40F]', 'PK__Facturas__15B69B8E81DFE807', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[FacturasCompras] ADD CONSTRAINT [UQ__Facturas__ABF5154AFDD8A579] UNIQUE NONCLUSTERED ([GUIDCONFIGURACION] ASC, [GUIDPROVEEDORES] ASC, [PUNTOVENTA] ASC, [NUMERO] ASC, [TIPOCOMPROBANTE] ASC, [LETRA] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+ALTER TABLE [dbo].[FormaPagos] ADD [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[FormaPagos] ADD [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[FormaPagos] ADD [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[FormaPagos] ADD [GUIDTIPOSCOMPROBANTESPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[FormaPagos] ADD [GUIDTCPAGOSPLANES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[FormaPagos] ADD [NOMBRETITULARTARJETA] varchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[ImputacionesPlanCuentas] DROP CONSTRAINT [UQ__Imputaci__3214EC26EDB78670]
+GO
+
+EXEC sp_rename '[dbo].[PK__Imputaci__15B69B8E8EE57170]', 'PK__Imputaci__15B69B8EBFE7E5FE', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[ImputacionesPlanCuentas] ADD CONSTRAINT [UQ__Imputaci__3214EC261EED93C9] UNIQUE NONCLUSTERED ([ID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+EXEC sp_rename '[dbo].[PK__Jurisdic__15B69B8E78FEEC8F]', 'PK__Jurisdic__15B69B8E40746355', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[LibroCheques] ALTER COLUMN [GUIDORIGENFONDOSCHEQUES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NULL
+GO
+
+ALTER TABLE [dbo].[LibroCheques] ADD [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[LibroCheques] ALTER COLUMN [GUIDPAGOSRECIBOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL
+GO
+
+ALTER TABLE [dbo].[LibroCheques] DROP COLUMN [GUIDBANCO]
+GO
+
+EXEC sp_rename '[dbo].[PK__LibroChe__15B69B8EBCC18503]', 'PK__LibroChe__15B69B8E7AD09FA3', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[Liquidaciones] DROP CONSTRAINT [UQ__Liquidac__8EC03F1E95464E7C]
+GO
+
+EXEC sp_rename '[dbo].[PK__Liquidac__15B69B8E801388E7]', 'PK__Liquidac__15B69B8ED09F6FE3', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[Liquidaciones] ADD CONSTRAINT [UQ__Liquidac__8EC03F1E39FAA7A5] UNIQUE NONCLUSTERED ([NROLIQUIDACION] ASC, [GUIDPROVEEDOR] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+CREATE TABLE [dbo].[MovimientoAdelantos] (
+  [Guid] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GuidEmpleados] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GuidSucursales] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GuidCajaGastos] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [Fecha] date  NOT NULL,
+  [Debe] decimal(13,3) DEFAULT 0 NULL,
+  [Haber] decimal(13,3) DEFAULT 0 NULL,
+  [Saldo] decimal(13,3) DEFAULT 0 NULL,
+  [Observaciones] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [MesImputacion] varchar(7) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [ts] float(53)  NULL,
+  [sts] float(53)  NULL,
+  [dts] float(53)  NULL,
+  CONSTRAINT [PK_MovimientoAdelantos] PRIMARY KEY CLUSTERED ([Guid])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[MovimientoAdelantos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+ALTER TABLE [dbo].[MovimientoClientes] ADD [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[MovimientoClientes] ADD [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[MovimientoClientes] ADD [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[MovimientoRemitos] ADD [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[MovimientoRemitos] ADD [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+EXEC sp_rename '[dbo].[PK__Movimien__15B69B8E73F0ABF0]', 'PK__Movimien__15B69B8EF4689FC8', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[MovimientosCuentaBancos] ADD [IMPORTE] decimal(13,2)  NULL
+GO
+
+ALTER TABLE [dbo].[MovimientosCuentaBancos] ADD [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL
+GO
+
+ALTER TABLE [dbo].[MovimientosCuentaBancos] DROP COLUMN [GUIDBANCO]
+GO
+
+EXEC sp_rename '[dbo].[PK__Movimien__15B69B8EF10C02CC]', 'PK__Movimien__15B69B8E58C9BDF8', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[MovimientoStock] ALTER COLUMN [GUIDMOVIMIENTOARTICULOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NULL
+GO
+
+EXEC sp_rename '[dbo].[PK__OrdenesD__15B69B8E3FD230C6]', 'PK__OrdenesD__15B69B8EFB80B585', 'OBJECT'
+GO
+
+EXEC sp_rename '[dbo].[PK__OrigenFo__15B69B8E6D0DBA65]', 'PK__OrigenFo__15B69B8E40D30D4D', 'OBJECT'
+GO
+
+CREATE TABLE [dbo].[PagosParcialesMovimientos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDMOVIMIENTOCLIENTES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [IMPORTEPAGADO] decimal(13,3) DEFAULT 0 NOT NULL,
+  [FECHA] date  NULL,
+  [ts] float(53) DEFAULT 0 NOT NULL,
+  [sts] float(53) DEFAULT 0 NOT NULL,
+  [dts] float(53) DEFAULT 0 NULL,
+  CONSTRAINT [PK_PagosParcialesMovimientos] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[PagosParcialesMovimientos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+EXEC sp_rename '[dbo].[PK__PagosRec__15B69B8E50CD00F8]', 'PK__PagosRec__15B69B8E8D5308DB', 'OBJECT'
+GO
+
+EXEC sp_rename '[dbo].[PK__PlanCuen__15B69B8EA99D9023]', 'PK__PlanCuen__15B69B8ED092DCF4', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[Recibos] ADD [GUIDCAJAGASTOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Recibos] ADD [GUIDCAJADIARIA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Recibos] ADD [GUIDUSUARIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+ALTER TABLE [dbo].[Recibos] ADD [GUIDEMPLEADOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+EXEC sp_rename '[dbo].[PK__Recibos__15B69B8E56CC06EF]', 'PK__Recibos__15B69B8E941ABE7E', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[Remitos] ADD [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+GO
+
+CREATE TABLE [dbo].[RemitosCambios] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [FECHA] int  NULL,
+  [HORA] int  NULL,
+  [NOMBRE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [CATFISCAL] varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [DOCUMENTO] varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [CUIT] char(13) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [PRECIODOLAR] decimal(7,2)  NULL,
+  [NETO] decimal(13,2)  NULL,
+  [IVA] decimal(13,2)  NULL,
+  [BONIFICACION] decimal(13,2)  NULL,
+  [TOTAL] decimal(13,3)  NULL,
+  [TIPO_COMPROBANTE] varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [PUNTO_VENTA] smallint  NULL,
+  [NUMERO_FACTURA] int  NULL,
+  [TOTAL_PAGOS] decimal(13,2)  NULL,
+  [TIPOOPERACION] varchar(30) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDCLIENTES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDSUCURSALES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDVENDEDORES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDIMPUTACIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDFACTURAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [PENDIENTEFACTURAR] int  NULL,
+  [ts] float(53)  NOT NULL,
+  [sts] float(53)  NOT NULL,
+  [dts] float(53)  NULL,
+  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  CONSTRAINT [PK__RemitosCambios__15B69B8EEBA627FA] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[RemitosCambios] SET (LOCK_ESCALATION = TABLE)
+GO
+
+CREATE TABLE [dbo].[RemitosDevoluciones] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [FECHA] int  NULL,
+  [HORA] int  NULL,
+  [NOMBRE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [CATFISCAL] varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [DOCUMENTO] varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [CUIT] char(13) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [PRECIODOLAR] decimal(7,2)  NULL,
+  [NETO] decimal(13,2)  NULL,
+  [IVA] decimal(13,2)  NULL,
+  [BONIFICACION] decimal(13,2)  NULL,
+  [TOTAL] decimal(13,3)  NULL,
+  [TIPO_COMPROBANTE] varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [PUNTO_VENTA] smallint  NULL,
+  [NUMERO_FACTURA] int  NULL,
+  [TOTAL_PAGOS] decimal(13,2)  NULL,
+  [TIPOOPERACION] varchar(30) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDCLIENTES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDSUCURSALES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDVENDEDORES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDIMPUTACIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDFACTURAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [PENDIENTEFACTURAR] int  NULL,
+  [ts] float(53)  NOT NULL,
+  [sts] float(53)  NOT NULL,
+  [dts] float(53)  NULL,
+  [GUIDREMITOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  CONSTRAINT [PK__RemitosDevoluciones__15B69B8EEBA627FA] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[RemitosDevoluciones] SET (LOCK_ESCALATION = TABLE)
+GO
+
+EXEC sp_rename '[dbo].[PK__SliderIm__3214EC073A97D4CC]', 'PK__SliderIm__3214EC077D79D9BF', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[SueldosConvenios] ALTER COLUMN [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL
+GO
+
+ALTER TABLE [dbo].[SueldosNovedades] ALTER COLUMN [GUIDCONFIGURACIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NULL
+GO
+
+ALTER TABLE [dbo].[SueldosRecibosDetalle] ALTER COLUMN [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL
+GO
+
+ALTER TABLE [dbo].[TCPagos] ADD [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+GO
+
+ALTER TABLE [dbo].[TCPagosPlanes] ADD [GUIDTIPOSCOMPROBANTESPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL
+GO
+
+ALTER TABLE [dbo].[TCPagosPlanes] DROP COLUMN [GUIDTCPAGOS]
+GO
+
+EXEC sp_rename '[dbo].[PK__TipoCuen__15B69B8E9B0D0D01]', 'PK__TipoCuen__15B69B8E0F87A9F0', 'OBJECT'
+GO
+
+CREATE TABLE [dbo].[TiposCobrosPagos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [TIPO] tinyint  NOT NULL,
+  [DESCRIPCION] char(40) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [TIPOMOVIMIENTO] char(1) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [ts] float(53)  NULL,
+  [sts] float(53)  NULL,
+  [dts] float(53)  NULL,
+  CONSTRAINT [PK_TiposCobrosPagos] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [UQ_TiposCobrosPagos_Guid] UNIQUE NONCLUSTERED ([GUID] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [CK_TiposCobrosPagos_TipoMov] CHECK ([TIPOMOVIMIENTO]='X' OR [TIPOMOVIMIENTO]='E' OR [TIPOMOVIMIENTO]='I' OR [TIPOMOVIMIENTO]='A')
+)
+GO
+
+ALTER TABLE [dbo].[TiposCobrosPagos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+CREATE TABLE [dbo].[TiposComprobantesPagos] (
+  [CODIGO_TCP] int  NULL,
+  [ABREVIADO] char(2) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [TIPO_COMPROBANTE] char(40) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [INTERES] decimal(7,2)  NULL,
+  [COEFICIENTE] decimal(11,7)  NULL,
+  [TELEFONO] char(60) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [OBSERVACIONES] varchar(254) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [NUMERO_COMERCIO] char(40) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [ID] char(3) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [DATOSADICIONAL] tinyint  NULL,
+  [TIPO] tinyint  NULL,
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [ts] float(53)  NULL,
+  [sts] float(53)  NULL,
+  [dts] float(53)  NULL,
+  [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDTIPOSCOBROSPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  CONSTRAINT [PK__TCPagos___15B69B8EFD170DD8] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [UQ__TCPagos___0FA19C51D6084539] UNIQUE NONCLUSTERED ([CODIGO_TCP] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY],
+  CONSTRAINT [UQ__TCPagos___9750319162DCA33C] UNIQUE NONCLUSTERED ([TIPO_COMPROBANTE] ASC)
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+)
+GO
+
+ALTER TABLE [dbo].[TiposComprobantesPagos] SET (LOCK_ESCALATION = TABLE)
+GO
+
+EXEC sp_rename '[dbo].[PK__TiposMov__15B69B8E45592F8F]', 'PK__TiposMov__15B69B8E93954135', 'OBJECT'
+GO
+
+ALTER TABLE [dbo].[TransferenciasBancos] ADD [GUIDBANCOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL
+GO
+
+ALTER TABLE [dbo].[TransferenciasBancos] ALTER COLUMN [GUIDCUENTABANCO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL
+GO
+
+ALTER TABLE [dbo].[TransferenciasBancos] DROP COLUMN [GUIDBANCO]
+GO
+
+ALTER TABLE [dbo].[Usuarios] ADD [CODIGO_USUARIO] smallint  NULL
+GO
+
+ALTER TABLE [dbo].[Usuarios] ADD [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL
+GO
+
+ALTER TABLE [dbo].[Usuarios] DROP COLUMN [GUIDBANCOS]
+GO
+
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [FK_CreditosDevoluciones_GuidClientes] FOREIGN KEY ([GUIDCLIENTES]) REFERENCES [dbo].[Clientes] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [FK_CreditosDevoluciones_GuidRemitosDevoluciones] FOREIGN KEY ([GUIDREMITOSDEVOLUCIONES]) REFERENCES [dbo].[RemitosDevoluciones] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevoluciones] ADD CONSTRAINT [FK_CreditosDevoluciones_GuidSucursales] FOREIGN KEY ([GUIDSUCURSALES]) REFERENCES [dbo].[Sucursales] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [FK_CreditosDevolucionesUsos_GuidCreditos] FOREIGN KEY ([GUIDCREDITOSDEVOLUCIONES]) REFERENCES [dbo].[CreditosDevoluciones] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [FK_CreditosDevolucionesUsos_GuidRemitos] FOREIGN KEY ([GUIDREMITOS]) REFERENCES [dbo].[Remitos] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[CreditosDevolucionesUsos] ADD CONSTRAINT [FK_CreditosDevolucionesUsos_GuidFormaPagos] FOREIGN KEY ([GUIDFORMAPAGOS]) REFERENCES [dbo].[FormaPagos] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[MovimientoAdelantos] ADD CONSTRAINT [FK_MovimientoAdelantos_GuidSucursales] FOREIGN KEY ([GuidSucursales]) REFERENCES [dbo].[Sucursales] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+ALTER TABLE [dbo].[PagosParcialesMovimientos] ADD CONSTRAINT [FK_PagosParcialesMovimientos_MovClientes] FOREIGN KEY ([GUIDMOVIMIENTOCLIENTES]) REFERENCES [dbo].[MovimientoClientes] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+DROP INDEX [BCU_GUIDBANCOKEY] ON [dbo].[BancosCuentas]
+GO
+
+CREATE NONCLUSTERED INDEX [BCU_GUIDBANCOKEY]
+ON [dbo].[BancosCuentas] (
+  [GUIDBANCOS] ASC
+)
+GO
+
+DROP INDEX [CJG_GUIDBANCOSKEY] ON [dbo].[CajaGastos]
+GO
+
+CREATE NONCLUSTERED INDEX [CJG_GUIDBANCOSKEY]
+ON [dbo].[CajaGastos] (
+  [GUIDBANCOSCUENTAS] ASC
+)
+GO
+
+DROP INDEX [CPB_GUIDBANCOKEY] ON [dbo].[ConceptosPorBanco]
+GO
+
+CREATE NONCLUSTERED INDEX [CPB_GUIDBANCOKEY]
+ON [dbo].[ConceptosPorBanco] (
+  [GUIDBANCOS] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_CreditosDevoluciones_GuidClientes_Estado]
+ON [dbo].[CreditosDevoluciones] (
+  [GUIDCLIENTES] ASC,
+  [ESTADO] ASC
+)
+WHERE ([dts] IS NULL)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_CreditosDevoluciones_GuidRemitosDevoluciones]
+ON [dbo].[CreditosDevoluciones] (
+  [GUIDREMITOSDEVOLUCIONES] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_CreditosDevolucionesUsos_GuidCreditos]
+ON [dbo].[CreditosDevolucionesUsos] (
+  [GUIDCREDITOSDEVOLUCIONES] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_CreditosDevolucionesUsos_GuidRemitos]
+ON [dbo].[CreditosDevolucionesUsos] (
+  [GUIDREMITOS] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_MovimientoAdelantos_GuidEmpleados_Fecha]
+ON [dbo].[MovimientoAdelantos] (
+  [GuidEmpleados] ASC,
+  [Fecha] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_MovimientoAdelantos_GuidSucursales_Fecha]
+ON [dbo].[MovimientoAdelantos] (
+  [GuidSucursales] ASC,
+  [Fecha] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_MovimientoAdelantos_MesImputacion]
+ON [dbo].[MovimientoAdelantos] (
+  [MesImputacion] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [IX_MovimientoClientes_GuidFormaPagos]
+ON [dbo].[MovimientoClientes] (
+  [GUIDFORMAPAGOS] ASC
+)
+WHERE ([GUIDFORMAPAGOS]='')
+GO
+
+CREATE NONCLUSTERED INDEX [IX_PagosParcialesMovimientos_GuidMovCli]
+ON [dbo].[PagosParcialesMovimientos] (
+  [GUIDMOVIMIENTOCLIENTES] ASC
+)
+INCLUDE ([IMPORTEPAGADO], [dts])
+GO
+
+DROP INDEX [MCB_GUIDBANCOKEY] ON [dbo].[MovimientosCuentaBancos]
+GO
+
+CREATE NONCLUSTERED INDEX [MCB_GUIDBANCOKEY]
+ON [dbo].[MovimientosCuentaBancos] (
+  [GUIDBANCOS] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [PRO_GUIDCONFIGURACIONKEY]
+ON [dbo].[Proveedores] (
+  [GUIDCONFIGURACION] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [PRO_GUIDIMPUTACIONESKEY]
+ON [dbo].[Proveedores] (
+  [GUIDIMPUTACIONES] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [PRO_IDKEY]
+ON [dbo].[Proveedores] (
+  [ID] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [PRO_NOMBRE_KEY]
+ON [dbo].[Proveedores] (
+  [NOMBRE] ASC
+)
+GO
+
+CREATE NONCLUSTERED INDEX [PRO_RUBRO_KEY]
+ON [dbo].[Proveedores] (
+  [RUBRO] ASC
+)
+GO
+
+DROP INDEX [TRB_GUIDBANCOKEY] ON [dbo].[TransferenciasBancos]
+GO
+
+CREATE NONCLUSTERED INDEX [TRB_GUIDBANCOKEY]
+ON [dbo].[TransferenciasBancos] (
+  [GUIDBANCOS] ASC
+)
+GO
+
+CREATE UNIQUE NONCLUSTERED INDEX [UQ_Bancos_CuentaNumero]
+ON [dbo].[Bancos] (
+  [CUENTANUMERO] ASC
+)
+WHERE ([CUENTANUMERO] IS NOT NULL)
+GO
+
+DROP INDEX [CNF_CONFIGURACION_KEY_copy1] ON [dbo].[Configuracion_copy1]
+GO
+
+DROP INDEX [CNF_EMPRESA_KEY_copy1] ON [dbo].[Configuracion_copy1]
+GO
+
+DROP INDEX [FCM_CODIGOCOMPROBANTEAFIPKEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_COMPROBANTE_KEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_CONFIGURACION_KEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_FECHACARGA_KEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_FECHA_KEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_GUIDCONFIGURACIONKEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_GUIDIMPUTACIONESKEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_GUIDPROVEEDORESKEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_GUIDREMITOSCOMPRASKEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_IDKEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_NUMERO_KEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_PROVEEDOR_KEY_copy1] ON [dbo].[FacturasCompras]
+GO
+
+DROP INDEX [FCM_CODIGOCOMPROBANTEAFIPKEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_COMPROBANTE_KEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_CONFIGURACION_KEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_FECHACARGA_KEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_FECHA_KEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_GUIDCONFIGURACIONKEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_GUIDIMPUTACIONESKEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_GUIDPROVEEDORESKEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_GUIDREMITOSCOMPRASKEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_IDKEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_NUMERO_KEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [FCM_PROVEEDOR_KEY_copy1_copy1] ON [dbo].[FacturasCompras_copy1]
+GO
+
+DROP INDEX [LIQ_GUIDCONFIGURACIONKEY_copy1] ON [dbo].[Liquidaciones_copy1]
+GO
+
+DROP INDEX [LIQ_GUIDPROVEEDORKEY_copy1] ON [dbo].[Liquidaciones_copy1]
+GO
+
+DROP INDEX [LIQ_IDKEY_copy1] ON [dbo].[Liquidaciones_copy1]
+GO
+
+DROP INDEX [PRO_GUIDCONFIGURACIONKEY] ON [dbo].[ProveedoresOLD]
+GO
+
+DROP INDEX [PRO_GUIDIMPUTACIONESKEY] ON [dbo].[ProveedoresOLD]
+GO
+
+DROP INDEX [PRO_IDKEY] ON [dbo].[ProveedoresOLD]
+GO
+
+DROP INDEX [PRO_NOMBRE_KEY] ON [dbo].[ProveedoresOLD]
+GO
+
+DROP INDEX [PRO_RUBRO_KEY] ON [dbo].[ProveedoresOLD]
+GO
+
+DROP INDEX [TCDP_IDKEY] ON [dbo].[TiposComprobantesDePagos]
+GO
+
+DROP INDEX [USU_GUIDBANCOSKEY] ON [dbo].[Usuarios]
+GO
+
+DROP VIEW [dbo].[VistaComprobantes_copy1]
+GO
+
+DROP VIEW [dbo].[VistaComprobantes_copy2]
+GO
+
+DROP VIEW [dbo].[VistaComprobantes_copy3]
+GO
+
+DROP VIEW [dbo].[VistaComprobantes_copy4]
+GO
+
+DROP VIEW [dbo].[VistaDetallesEmpleados_copy2]
+GO
+
+DROP TABLE IF EXISTS [dbo].[Configuracion_copy1]
+GO
+
+DROP TABLE IF EXISTS [dbo].[FacturasCompras_copy1]
+GO
+
+DROP TABLE IF EXISTS [dbo].[Liquidaciones_copy1]
+GO
+
+DROP TABLE IF EXISTS [dbo].[ProveedoresOLD]
+GO
+
+DROP TABLE IF EXISTS [dbo].[TiposComprobantesDePagos]

@@ -12,7 +12,7 @@
  Target Server Version : 17001000
  File Encoding         : 65001
 
- Date: 23/03/2026 12:47:11
+ Date: 27/03/2026 12:45:38
 */
 
 
@@ -122,7 +122,7 @@ GO
 
 CREATE TABLE [dbo].[Bancos] (
   [CUENTANUMERO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [BANCO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [NOMBRE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [DIRECCION] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [LOCALIDAD] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [TELEFONO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
@@ -133,7 +133,6 @@ CREATE TABLE [dbo].[Bancos] (
   [sts] int  NULL,
   [dts] int  NULL,
   [ID] int  NULL,
-  [NOMBRE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [ACTIVO] tinyint  NULL
 )
 GO
@@ -714,6 +713,37 @@ GO
 
 
 -- ----------------------------
+-- Table structure for ControlComprobantes
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[ControlComprobantes]') AND type IN ('U'))
+	DROP TABLE [dbo].[ControlComprobantes]
+GO
+
+CREATE TABLE [dbo].[ControlComprobantes] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
+  [FECHA] int DEFAULT 0 NOT NULL,
+  [HORA] int DEFAULT 0 NOT NULL,
+  [CONCEPTO] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [DEBE] decimal(13,3) DEFAULT 0 NOT NULL,
+  [HABER] decimal(13,3) DEFAULT 0 NOT NULL,
+  [CONCILIADO] tinyint DEFAULT 0 NOT NULL,
+  [TIPOMOVIMIENTO] tinyint DEFAULT 1 NOT NULL,
+  [GUIDCLIENTE] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDREMITO] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDCAJADIARIA] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [ts] float(53)  NULL,
+  [sts] float(53)  NULL,
+  [dts] float(53)  NULL
+)
+GO
+
+ALTER TABLE [dbo].[ControlComprobantes] SET (LOCK_ESCALATION = TABLE)
+GO
+
+
+-- ----------------------------
 -- Table structure for CreditosDevoluciones
 -- ----------------------------
 IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[CreditosDevoluciones]') AND type IN ('U'))
@@ -946,7 +976,7 @@ CREATE TABLE [dbo].[Facturas] (
   [NUMEROCIERREZ] int  NULL,
   [TIPO_COMPROBANTE] char(3) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [TIPO_FACTURA] char(1) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
-  [TIPO_IVA] char(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [TIPO_IVA] char(30) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [CODIGO_REMITO] smallint  NULL,
   [FECHA] decimal(7)  NULL,
   [FECHA_VENCIMIENTO] date  NULL,
@@ -1021,7 +1051,6 @@ CREATE TABLE [dbo].[FacturasCompras] (
   [GUIDREMITOSCOMPRAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [CODIGOCOMPROBANTEAFIP] int  NOT NULL,
   [NOMBRE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [REMITONUMERO] char(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
   [PUNTOVENTA] int  NOT NULL,
   [NUMERO] int  NOT NULL,
   [TIPOCOMPROBANTE] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NOT NULL,
@@ -1111,8 +1140,9 @@ CREATE TABLE [dbo].[FormaPagos] (
   [GUIDBANCOSCUENTAS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
   [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
   [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
-  [GUIDTCPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
-  [GUIDTCPAGOSPLANES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
+  [GUIDTIPOSCOMPROBANTESPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDTCPAGOSPLANES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [NOMBRETITULARTARJETA] varchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -1402,7 +1432,8 @@ CREATE TABLE [dbo].[MovimientoClientes] (
   [sts] float(53)  NULL,
   [dts] float(53)  NULL,
   [GUIDREMITOSDEVOLUCIONES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
-  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
+  [GUIDREMITOSCAMBIOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL
 )
 GO
 
@@ -1618,6 +1649,29 @@ CREATE TABLE [dbo].[OrigenFondosCheques] (
 GO
 
 ALTER TABLE [dbo].[OrigenFondosCheques] SET (LOCK_ESCALATION = TABLE)
+GO
+
+
+-- ----------------------------
+-- Table structure for PagosParcialesMovimientos
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[PagosParcialesMovimientos]') AND type IN ('U'))
+	DROP TABLE [dbo].[PagosParcialesMovimientos]
+GO
+
+CREATE TABLE [dbo].[PagosParcialesMovimientos] (
+  [GUID] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDMOVIMIENTOCLIENTES] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [GUIDFORMAPAGOS] char(16) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT '' NOT NULL,
+  [IMPORTEPAGADO] decimal(13,3) DEFAULT 0 NOT NULL,
+  [FECHA] date  NULL,
+  [ts] float(53) DEFAULT 0 NOT NULL,
+  [sts] float(53) DEFAULT 0 NOT NULL,
+  [dts] float(53) DEFAULT 0 NULL
+)
+GO
+
+ALTER TABLE [dbo].[PagosParcialesMovimientos] SET (LOCK_ESCALATION = TABLE)
 GO
 
 
@@ -2051,7 +2105,9 @@ CREATE TABLE [dbo].[Sucursales] (
   [dts] float(53)  NULL,
   [LOGO] text COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
   [COTIZACIONDOLAR] decimal(13,2)  NULL,
-  [IDCOMPROBANTEFACP] int  NULL
+  [IDCOMPROBANTEFACP] int  NULL,
+  [CELULAR] char(20) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL,
+  [EMAIL] varchar(255) COLLATE SQL_Latin1_General_CP1_CI_AS  NULL
 )
 GO
 
@@ -3423,6 +3479,87 @@ GO
 
 
 -- ----------------------------
+-- procedure structure for SP_RecalcularSaldoCliente
+-- ----------------------------
+IF EXISTS (SELECT * FROM sys.all_objects WHERE object_id = OBJECT_ID(N'[dbo].[SP_RecalcularSaldoCliente]') AND type IN ('P', 'PC', 'RF', 'X'))
+	DROP PROCEDURE[dbo].[SP_RecalcularSaldoCliente]
+GO
+
+CREATE PROCEDURE [dbo].[SP_RecalcularSaldoCliente]
+    @GuidCliente CHAR(16) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- =========================================================================
+    -- 1. Reconciliar movimientos legacy en MovimientoClientes
+    --    (mantener para que MC no quede inconsistente)
+    -- =========================================================================
+    ;WITH RemitosConIngreso AS (
+        SELECT DISTINCT RTRIM(mc.GUIDREMITOS) AS GuidRemito
+        FROM MovimientoClientes mc
+        WHERE mc.DESCRIPCION LIKE '%Ingreso por venta %'
+          AND mc.HABER > 0
+          AND mc.GUIDREMITOS <> ''
+          AND (mc.GUIDFORMAPAGOS = '' OR mc.GUIDFORMAPAGOS IS NULL)
+          AND (mc.dts IS NULL OR mc.dts = 0)
+          AND (@GuidCliente IS NULL OR mc.GUIDCLIENTES = @GuidCliente)
+    )
+    UPDATE mc
+    SET mc.GUIDFORMAPAGOS = 'RECONCILIADO'
+    FROM MovimientoClientes mc
+    INNER JOIN RemitosConIngreso r ON RTRIM(mc.GUIDREMITOS) = r.GuidRemito
+    WHERE (mc.GUIDFORMAPAGOS = '' OR mc.GUIDFORMAPAGOS IS NULL)
+      AND (mc.dts IS NULL OR mc.dts = 0)
+      AND (@GuidCliente IS NULL OR mc.GUIDCLIENTES = @GuidCliente);
+
+    UPDATE MovimientoClientes
+    SET GUIDFORMAPAGOS = 'RECONCILIADO'
+    WHERE DESCRIPCION LIKE 'Cobro Cta. Cte.%'
+      AND HABER > 0
+      AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL)
+      AND (dts IS NULL OR dts = 0)
+      AND (@GuidCliente IS NULL OR GUIDCLIENTES = @GuidCliente);
+
+    -- =========================================================================
+    -- 2. Recalcular saldos desde ControlComprobantes (CONCILIADO = 0)
+    --    Saldo = SUM(DEBE) - SUM(HABER) de comprobantes NO conciliados
+    -- =========================================================================
+    UPDATE c
+    SET c.SALDO = ISNULL(cc.SaldoReal, 0)
+    FROM Clientes c
+    CROSS APPLY (
+        SELECT SUM(ISNULL(cc2.DEBE, 0)) - SUM(ISNULL(cc2.HABER, 0)) AS SaldoReal
+        FROM ControlComprobantes cc2
+        WHERE cc2.GUIDCLIENTE = c.GUID
+          AND cc2.CONCILIADO = 0
+          AND (cc2.dts IS NULL OR cc2.dts = 0)
+    ) cc
+    WHERE c.SALDO <> ISNULL(cc.SaldoReal, 0)
+      AND (c.dts IS NULL OR c.dts = 0)
+      AND (@GuidCliente IS NULL OR c.GUID = @GuidCliente);
+
+    -- =========================================================================
+    -- 3. Clientes sin comprobantes pendientes deben quedar en 0
+    -- =========================================================================
+    UPDATE c
+    SET c.SALDO = 0
+    FROM Clientes c
+    WHERE c.SALDO <> 0
+      AND (c.dts IS NULL OR c.dts = 0)
+      AND (@GuidCliente IS NULL OR c.GUID = @GuidCliente)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM ControlComprobantes cc
+          WHERE cc.GUIDCLIENTE = c.GUID
+            AND cc.CONCILIADO = 0
+            AND (cc.dts IS NULL OR cc.dts = 0)
+      );
+END;
+GO
+
+
+-- ----------------------------
 -- Auto increment value for AdminUsers
 -- ----------------------------
 DBCC CHECKIDENT ('[dbo].[AdminUsers]', RESEED, 1)
@@ -4108,6 +4245,42 @@ GO
 
 
 -- ----------------------------
+-- Indexes structure for table ControlComprobantes
+-- ----------------------------
+CREATE NONCLUSTERED INDEX [IX_ControlComprobantes_GuidCliente_Conciliado]
+ON [dbo].[ControlComprobantes] (
+  [GUIDCLIENTE] ASC,
+  [CONCILIADO] ASC
+)
+INCLUDE ([FECHA], [CONCEPTO], [DEBE], [HABER], [TIPOMOVIMIENTO], [GUIDREMITO], [GUIDREMITOSDEVOLUCIONES], [GUIDREMITOSCAMBIOS])
+GO
+
+CREATE NONCLUSTERED INDEX [IX_ControlComprobantes_GuidCliente_Fecha]
+ON [dbo].[ControlComprobantes] (
+  [GUIDCLIENTE] ASC,
+  [FECHA] ASC
+)
+INCLUDE ([CONCEPTO], [DEBE], [HABER], [CONCILIADO], [TIPOMOVIMIENTO], [GUIDREMITO], [GUIDREMITOSDEVOLUCIONES], [GUIDREMITOSCAMBIOS])
+GO
+
+CREATE NONCLUSTERED INDEX [IX_ControlComprobantes_GuidRemito]
+ON [dbo].[ControlComprobantes] (
+  [GUIDREMITO] ASC
+)
+WHERE ([GUIDREMITO]<>'')
+GO
+
+
+-- ----------------------------
+-- Primary Key structure for table ControlComprobantes
+-- ----------------------------
+ALTER TABLE [dbo].[ControlComprobantes] ADD CONSTRAINT [PK_ControlComprobantes] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
 -- Indexes structure for table CreditosDevoluciones
 -- ----------------------------
 CREATE NONCLUSTERED INDEX [IX_CreditosDevoluciones_GuidClientes_Estado]
@@ -4717,6 +4890,17 @@ GO
 
 
 -- ----------------------------
+-- Indexes structure for table MovimientoClientes
+-- ----------------------------
+CREATE NONCLUSTERED INDEX [IX_MovimientoClientes_GuidFormaPagos]
+ON [dbo].[MovimientoClientes] (
+  [GUIDFORMAPAGOS] ASC
+)
+WHERE ([GUIDFORMAPAGOS]='')
+GO
+
+
+-- ----------------------------
 -- Primary Key structure for table MovimientoClientes
 -- ----------------------------
 ALTER TABLE [dbo].[MovimientoClientes] ADD CONSTRAINT [PK__Movimien__15B69B8E23D3E321] PRIMARY KEY CLUSTERED ([GUID])
@@ -4865,6 +5049,26 @@ GO
 -- Primary Key structure for table OrigenFondosCheques
 -- ----------------------------
 ALTER TABLE [dbo].[OrigenFondosCheques] ADD CONSTRAINT [PK__OrigenFo__15B69B8E40D30D4D] PRIMARY KEY CLUSTERED ([GUID])
+WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
+ON [PRIMARY]
+GO
+
+
+-- ----------------------------
+-- Indexes structure for table PagosParcialesMovimientos
+-- ----------------------------
+CREATE NONCLUSTERED INDEX [IX_PagosParcialesMovimientos_GuidMovCli]
+ON [dbo].[PagosParcialesMovimientos] (
+  [GUIDMOVIMIENTOCLIENTES] ASC
+)
+INCLUDE ([IMPORTEPAGADO], [dts])
+GO
+
+
+-- ----------------------------
+-- Primary Key structure for table PagosParcialesMovimientos
+-- ----------------------------
+ALTER TABLE [dbo].[PagosParcialesMovimientos] ADD CONSTRAINT [PK_PagosParcialesMovimientos] PRIMARY KEY CLUSTERED ([GUID])
 WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)  
 ON [PRIMARY]
 GO
@@ -6032,5 +6236,12 @@ GO
 -- Foreign Keys structure for table MovimientoAdelantos
 -- ----------------------------
 ALTER TABLE [dbo].[MovimientoAdelantos] ADD CONSTRAINT [FK_MovimientoAdelantos_GuidSucursales] FOREIGN KEY ([GuidSucursales]) REFERENCES [dbo].[Sucursales] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
+GO
+
+
+-- ----------------------------
+-- Foreign Keys structure for table PagosParcialesMovimientos
+-- ----------------------------
+ALTER TABLE [dbo].[PagosParcialesMovimientos] ADD CONSTRAINT [FK_PagosParcialesMovimientos_MovClientes] FOREIGN KEY ([GUIDMOVIMIENTOCLIENTES]) REFERENCES [dbo].[MovimientoClientes] ([GUID]) ON DELETE NO ACTION ON UPDATE NO ACTION
 GO
 

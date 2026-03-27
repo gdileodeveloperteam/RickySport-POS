@@ -125,7 +125,7 @@ async function RecalcularSaldos(guidCliente = null) {
   const pool = await getPool();
   const req = pool.request();
   if (guidCliente) req.input('guid', sql.Char(16), guidCliente);
-  await req.query(`EXEC SP_RecalcularSaldoCliente ${guidCliente ? '@GuidCliente = @guid' : ''}`);
+  await req.query(`EXEC SP_RecalcularSaldoCliente ${guidCliente ? '@guid_cliente = @guid' : ''}`);
   return { ok: true };
 }
 
@@ -138,92 +138,38 @@ async function GetMovimientos(guidCliente, desde, hasta) {
   let fechaFilterMain = '';
   if (desde) {
     request.input('desde', sql.Decimal(7), dateToClarion(desde));
-    fechaFilterSaldo = ' AND FECHA < @desde';
-    fechaFilterMain = ' AND FECHA >= @desde';
+    fechaFilterSaldo = ' AND cc.FECHA < @desde';
+    fechaFilterMain = ' AND cc.FECHA >= @desde';
   }
   if (hasta) {
     request.input('hasta', sql.Decimal(7), dateToClarion(hasta));
-    fechaFilterMain += ' AND FECHA <= @hasta';
+    fechaFilterMain += ' AND cc.FECHA <= @hasta';
   }
 
-  // Vista unificada: MovimientoClientes + Ventas + Devoluciones no representadas en MC
+  // Movimientos desde ControlComprobantes con saldo inicial y final
   const result = await request.query(`
-    ;WITH MovimientosCompletos AS (
-      -- 1. MovimientoClientes existentes
-      SELECT mc.GUID, mc.FECHA, mc.DESCRIPCION, mc.DEBE, mc.HABER,
-             mc.GUIDREMITOS, mc.GUIDREMITOSDEVOLUCIONES, mc.GUIDFORMAPAGOS, mc.ts,
-             ISNULL(pp.TotalParcial, 0) AS TOTALPARCIAL
-      FROM MovimientoClientes mc
-      LEFT JOIN (
-        SELECT GUIDMOVIMIENTOCLIENTES, SUM(IMPORTEPAGADO) AS TotalParcial
-        FROM PagosParcialesMovimientos WHERE (dts IS NULL OR dts = 0)
-        GROUP BY GUIDMOVIMIENTOCLIENTES
-      ) pp ON pp.GUIDMOVIMIENTOCLIENTES = mc.GUID
-      WHERE mc.GUIDCLIENTES = @guidCliente AND (mc.dts IS NULL OR mc.dts = 0)
+    -- Movimientos del rango solicitado
+    SELECT cc.GUID, cc.FECHA, cc.HORA, cc.CONCEPTO, cc.DEBE, cc.HABER,
+           cc.CONCILIADO, cc.TIPOMOVIMIENTO,
+           cc.GUIDREMITO, cc.GUIDREMITOSDEVOLUCIONES, cc.GUIDREMITOSCAMBIOS,
+           r.NOMBRE AS RemNombre,
+           COALESCE(f.NUMERO_FACTURA, fd.NUMERO_FACTURA) AS NUMERO_FACTURA,
+           COALESCE(f.TIPO_COMPROBANTE, fd.TIPO_COMPROBANTE) AS FacturaTipo,
+           cc.ts
+    FROM ControlComprobantes cc
+    LEFT JOIN Remitos r ON r.GUID = cc.GUIDREMITO AND cc.GUIDREMITO <> ''
+    LEFT JOIN Facturas f ON f.GUIDREMITOS = cc.GUIDREMITO AND f.GUIDREMITOS <> '' AND (f.dts IS NULL OR f.dts = 0)
+    LEFT JOIN RemitosDevoluciones rd ON rd.GUID = cc.GUIDREMITOSDEVOLUCIONES AND cc.GUIDREMITOSDEVOLUCIONES <> ''
+    LEFT JOIN Facturas fd ON fd.GUID = rd.GUIDFACTURAS AND rd.GUIDFACTURAS <> '' AND (fd.dts IS NULL OR fd.dts = 0)
+    WHERE cc.GUIDCLIENTE = @guidCliente AND (cc.dts IS NULL OR cc.dts = 0)
+      ${fechaFilterMain}
+    ORDER BY cc.FECHA ASC, cc.ts ASC;
 
-      UNION ALL
-
-      -- 2. Ventas (Remitos) sin entrada en MC (pagadas con efectivo/credito/tarjeta)
-      SELECT r.GUID, r.FECHA, CAST('Venta - ' + RTRIM(ISNULL(r.NOMBRE, '')) AS VARCHAR(2000)),
-             r.TOTAL AS DEBE, 0 AS HABER,
-             r.GUID AS GUIDREMITOS, '' AS GUIDREMITOSDEVOLUCIONES,
-             'PAGADO' AS GUIDFORMAPAGOS, r.ts, 0 AS TOTALPARCIAL
-      FROM Remitos r
-      WHERE r.GUIDCLIENTES = @guidCliente AND (r.dts IS NULL OR r.dts = 0)
-        AND NOT EXISTS (
-          SELECT 1 FROM MovimientoClientes mc2
-          WHERE mc2.GUIDREMITOS = r.GUID AND (mc2.dts IS NULL OR mc2.dts = 0)
-        )
-        AND (r.GUIDREMITOSCAMBIOS = '' OR r.GUIDREMITOSCAMBIOS IS NULL)
-
-      UNION ALL
-
-      -- 3. Devoluciones sin entrada en MC
-      SELECT rd.GUID, rd.FECHA, CAST('Devolucion - ' + RTRIM(ISNULL(rd.NOMBRE, '')) AS VARCHAR(2000)),
-             0 AS DEBE, rd.TOTAL AS HABER,
-             '' AS GUIDREMITOS, rd.GUID AS GUIDREMITOSDEVOLUCIONES,
-             CASE WHEN cd.ESTADO = 'CONSUMIDO' THEN 'CONSUMIDO' ELSE '' END AS GUIDFORMAPAGOS,
-             rd.ts, 0 AS TOTALPARCIAL
-      FROM RemitosDevoluciones rd
-      LEFT JOIN CreditosDevoluciones cd ON cd.GUIDREMITOSDEVOLUCIONES = rd.GUID AND (cd.dts IS NULL OR cd.dts = 0)
-      WHERE rd.GUIDCLIENTES = @guidCliente AND (rd.dts IS NULL OR rd.dts = 0)
-        AND NOT EXISTS (
-          SELECT 1 FROM MovimientoClientes mc3
-          WHERE mc3.GUIDREMITOSDEVOLUCIONES = rd.GUID AND (mc3.dts IS NULL OR mc3.dts = 0)
-        )
-    )
-    SELECT GUID, FECHA, DESCRIPCION, DEBE, HABER, GUIDREMITOS, GUIDREMITOSDEVOLUCIONES, GUIDFORMAPAGOS, TOTALPARCIAL
-    FROM MovimientosCompletos
-    WHERE 1=1 ${fechaFilterMain}
-    ORDER BY FECHA ASC, ts ASC;
-
-    -- Saldo anterior (solo movimientos pendientes, descontando pagos parciales)
-    SELECT ISNULL(SUM(sub.DEBE), 0) - ISNULL(SUM(sub.PARCIAL), 0) - ISNULL(SUM(sub.HABER), 0) AS SaldoAnterior
-    FROM (
-      SELECT mc.DEBE, mc.HABER, ISNULL(pp.TotalParcial, 0) AS PARCIAL, mc.FECHA
-      FROM MovimientoClientes mc
-      LEFT JOIN (
-        SELECT GUIDMOVIMIENTOCLIENTES, SUM(IMPORTEPAGADO) AS TotalParcial
-        FROM PagosParcialesMovimientos WHERE (dts IS NULL OR dts = 0)
-        GROUP BY GUIDMOVIMIENTOCLIENTES
-      ) pp ON pp.GUIDMOVIMIENTOCLIENTES = mc.GUID
-      WHERE mc.GUIDCLIENTES = @guidCliente AND (mc.dts IS NULL OR mc.dts = 0)
-        AND (mc.GUIDFORMAPAGOS = '' OR mc.GUIDFORMAPAGOS IS NULL)
-      UNION ALL
-      SELECT r.TOTAL AS DEBE, 0 AS HABER, 0 AS PARCIAL, r.FECHA
-      FROM Remitos r
-      WHERE r.GUIDCLIENTES = @guidCliente AND (r.dts IS NULL OR r.dts = 0)
-        AND NOT EXISTS (SELECT 1 FROM MovimientoClientes mc2 WHERE mc2.GUIDREMITOS = r.GUID AND (mc2.dts IS NULL OR mc2.dts = 0))
-        AND (r.GUIDREMITOSCAMBIOS = '' OR r.GUIDREMITOSCAMBIOS IS NULL)
-      UNION ALL
-      SELECT 0 AS DEBE, rd.TOTAL AS HABER, 0 AS PARCIAL, rd.FECHA
-      FROM RemitosDevoluciones rd
-      LEFT JOIN CreditosDevoluciones cd ON cd.GUIDREMITOSDEVOLUCIONES = rd.GUID AND (cd.dts IS NULL OR cd.dts = 0)
-      WHERE rd.GUIDCLIENTES = @guidCliente AND (rd.dts IS NULL OR rd.dts = 0)
-        AND NOT EXISTS (SELECT 1 FROM MovimientoClientes mc3 WHERE mc3.GUIDREMITOSDEVOLUCIONES = rd.GUID AND (mc3.dts IS NULL OR mc3.dts = 0))
-        AND (cd.ESTADO IS NULL OR cd.ESTADO <> 'CONSUMIDO')
-    ) sub
-    WHERE 1=1 ${fechaFilterSaldo};
+    -- Saldo anterior (hasta dia anterior a @desde)
+    SELECT ISNULL(SUM(cc.DEBE), 0) - ISNULL(SUM(cc.HABER), 0) AS SaldoAnterior
+    FROM ControlComprobantes cc
+    WHERE cc.GUIDCLIENTE = @guidCliente AND (cc.dts IS NULL OR cc.dts = 0)
+      ${fechaFilterSaldo};
   `);
 
   const movimientos = result.recordsets[0] || [];
@@ -249,35 +195,26 @@ async function GetFacturas(guidCliente, desde, hasta) {
   return result.recordset;
 }
 
-// Deuda activa: movimientos pendientes (sin GUIDFORMAPAGOS), descontando pagos parciales
+// Deuda activa: comprobantes sin conciliar del cliente (ControlComprobantes)
 async function GetDeudaActiva(guidCliente) {
   const pool = await getPool();
   const result = await pool.request()
     .input('guidCliente', sql.Char(16), guidCliente)
     .query(`
-      SELECT mc.GUID, mc.FECHA, mc.DESCRIPCION, mc.DEBE, mc.HABER,
-             mc.GUIDREMITOS, mc.GUIDREMITOSDEVOLUCIONES, mc.GUIDREMITOSCAMBIOS,
+      SELECT cc.GUID, cc.FECHA, cc.CONCEPTO, cc.DEBE, cc.HABER,
+             cc.GUIDREMITO, cc.GUIDREMITOSDEVOLUCIONES, cc.GUIDREMITOSCAMBIOS,
              r.NOMBRE AS RemNombre, r.TOTAL AS RemTotal,
-             COALESCE(f.NUMERO_FACTURA, fd.NUMERO_FACTURA) AS NUMERO_FACTURA,
-             COALESCE(f.TIPO_COMPROBANTE, fd.TIPO_COMPROBANTE) AS FacturaTipo,
-             ISNULL(pp.TotalParcial, 0) AS TOTALPARCIAL,
-             mc.DEBE - ISNULL(pp.TotalParcial, 0) AS PENDIENTE
-      FROM MovimientoClientes mc
-      LEFT JOIN Remitos r ON r.GUID = mc.GUIDREMITOS AND mc.GUIDREMITOS <> ''
-      LEFT JOIN Facturas f ON f.GUIDREMITOS = mc.GUIDREMITOS AND f.GUIDREMITOS <> '' AND (f.dts IS NULL OR f.dts = 0)
-      LEFT JOIN RemitosDevoluciones rd ON rd.GUID = mc.GUIDREMITOSDEVOLUCIONES AND mc.GUIDREMITOSDEVOLUCIONES <> ''
-      LEFT JOIN Facturas fd ON fd.GUID = rd.GUIDFACTURAS AND rd.GUIDFACTURAS <> '' AND (fd.dts IS NULL OR fd.dts = 0)
-      LEFT JOIN (
-        SELECT GUIDMOVIMIENTOCLIENTES, SUM(IMPORTEPAGADO) AS TotalParcial
-        FROM PagosParcialesMovimientos
-        WHERE (dts IS NULL OR dts = 0)
-        GROUP BY GUIDMOVIMIENTOCLIENTES
-      ) pp ON pp.GUIDMOVIMIENTOCLIENTES = mc.GUID
-      WHERE mc.GUIDCLIENTES = @guidCliente
-        AND (mc.dts IS NULL OR mc.dts = 0)
-        AND (mc.GUIDFORMAPAGOS = '' OR mc.GUIDFORMAPAGOS IS NULL)
-        AND (mc.DEBE > 0 OR mc.HABER > 0)
-      ORDER BY mc.FECHA ASC, mc.ts ASC
+             cd.MONTOORIGINAL AS CreditoOriginal,
+             cd.MONTOUSADO AS CreditoUsado
+      FROM ControlComprobantes cc
+      LEFT JOIN Remitos r ON r.GUID = cc.GUIDREMITO AND cc.GUIDREMITO <> ''
+      LEFT JOIN CreditosDevoluciones cd ON cd.GUIDREMITOSDEVOLUCIONES = cc.GUIDREMITOSDEVOLUCIONES
+        AND cc.GUIDREMITOSDEVOLUCIONES <> '' AND cc.HABER > 0 AND cc.DEBE = 0
+        AND (cd.dts IS NULL OR cd.dts = 0)
+      WHERE cc.GUIDCLIENTE = @guidCliente
+        AND cc.CONCILIADO = 0
+        AND (cc.dts IS NULL OR cc.dts = 0)
+      ORDER BY cc.FECHA ASC, cc.ts ASC
     `);
   return result.recordset;
 }
@@ -297,9 +234,11 @@ async function CobroDeuda({ guidCliente, guidSucursal, guidUsuario, items, pagos
     const guidCobro = newGuid();
 
     // 1. Registrar cada pago (FormaPagos + CajaDiaria + MovimientosCuentaBancos)
+    let firstGuidCaja = '';
     for (const pago of pagos) {
       const guidPago = newGuid();
       const guidCaja = newGuid();
+      if (!firstGuidCaja) firstGuidCaja = guidCaja;
 
       const tipoNombreCorto = (pago.tipoNombre || pago.descripcion || '').substring(0, 30);
       await tx.request()
@@ -387,50 +326,32 @@ async function CobroDeuda({ guidCliente, guidSucursal, guidUsuario, items, pagos
         .query(`UPDATE FormaPagos SET GUIDMOVIMIENTOBANCOS = @guidMovBanco WHERE GUID = @guidPago`);
     }
 
-    // 2. Imputar comprobantes: NUNCA eliminar ni reducir DEBE
+    // 2. Conciliar comprobantes seleccionados en ControlComprobantes
+    //    item.guid ahora es el GUID de ControlComprobantes
     for (const item of items) {
-      if (item.esParcial) {
-        // Pago parcial: registrar en PagosParcialesMovimientos (mantiene DEBE original)
-        const guidParcial = newGuid();
-        await tx.request()
-          .input('guid', sql.Char(16), guidParcial)
-          .input('guidMovCli', sql.Char(16), item.guid)
-          .input('guidFP', sql.Char(16), guidCobro)
-          .input('importe', sql.Decimal(13, 3), item.importe)
-          .input('fecha', sql.Date, todayAR())
-          .input('ts', sql.Float, ts)
-          .input('sts', sql.Float, ts)
-          .query(`
-            INSERT INTO PagosParcialesMovimientos (GUID, GUIDMOVIMIENTOCLIENTES, GUIDFORMAPAGOS,
-              IMPORTEPAGADO, FECHA, ts, sts)
-            VALUES (@guid, @guidMovCli, @guidFP, @importe, @fecha, @ts, @sts)
-          `);
+      // Marcar conciliado en ControlComprobantes
+      await tx.request()
+        .input('guid', sql.Char(16), item.guid)
+        .query(`
+          UPDATE ControlComprobantes SET CONCILIADO = 1
+          WHERE GUID = @guid AND (dts IS NULL OR dts = 0)
+        `);
 
-        // Verificar si con este pago se completa el total del comprobante
-        const checkRes = await tx.request()
-          .input('guidMovCli', sql.Char(16), item.guid)
-          .query(`
-            SELECT mc.DEBE, ISNULL(SUM(pp.IMPORTEPAGADO), 0) AS TotalPagado
-            FROM MovimientoClientes mc
-            LEFT JOIN PagosParcialesMovimientos pp
-              ON pp.GUIDMOVIMIENTOCLIENTES = mc.GUID AND (pp.dts IS NULL OR pp.dts = 0)
-            WHERE mc.GUID = @guidMovCli
-            GROUP BY mc.DEBE
-          `);
-        const row = checkRes.recordset[0];
-        if (row && row.TotalPagado >= row.DEBE - 0.01) {
-          // Completado: marcar como cobrado para que no aparezca en deuda activa
-          await tx.request()
-            .input('guid', sql.Char(16), item.guid)
-            .input('guidFP', sql.Char(16), guidCobro)
-            .query(`UPDATE MovimientoClientes SET GUIDFORMAPAGOS = @guidFP WHERE GUID = @guid`);
-        }
-      } else {
-        // Pago total: marcar GUIDFORMAPAGOS (NO se toca dts ni DEBE)
+      // También marcar en MovimientoClientes (por el GUIDREMITO del CC)
+      const ccInfo = await tx.request()
+        .input('guid', sql.Char(16), item.guid)
+        .query(`SELECT RTRIM(GUIDREMITO) AS GUIDREMITO FROM ControlComprobantes WHERE GUID = @guid`);
+      const guidRemCC = (ccInfo.recordset[0]?.GUIDREMITO || '').trim();
+      if (guidRemCC) {
         await tx.request()
-          .input('guid', sql.Char(16), item.guid)
+          .input('guidRemito', sql.Char(16), guidRemCC)
           .input('guidFP', sql.Char(16), guidCobro)
-          .query(`UPDATE MovimientoClientes SET GUIDFORMAPAGOS = @guidFP WHERE GUID = @guid`);
+          .query(`
+            UPDATE MovimientoClientes SET GUIDFORMAPAGOS = @guidFP
+            WHERE GUIDREMITOS = @guidRemito AND GUIDREMITOS <> ''
+              AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL)
+              AND (dts IS NULL OR dts = 0)
+          `);
       }
     }
 
@@ -477,12 +398,39 @@ async function CobroDeuda({ guidCliente, guidSucursal, guidUsuario, items, pagos
           @guidRemitoDev, @guidRemitoCambio, @guidFormaPagos, @ts, @sts, @dts)
       `);
 
-    // 4. Recalcular saldo del cliente via SP
+    // 4. ControlComprobantes — COBRANZA CTA.CTE.
+    const guidCCCobro = newGuid();
+    await tx.request()
+      .input('guid', sql.Char(16), guidCCCobro)
+      .input('fecha', sql.Int, fecha)
+      .input('hora', sql.Int, timeToInt())
+      .input('concepto', sql.VarChar(255), 'COBRANZA CTA.CTE.')
+      .input('debe', sql.Decimal(13, 3), 0)
+      .input('haber', sql.Decimal(13, 3), total)
+      .input('conciliado', sql.TinyInt, 1)
+      .input('tipoMov', sql.TinyInt, 2)
+      .input('guidCliente', sql.Char(16), guidCliente)
+      .input('guidRemito', sql.Char(16), '')
+      .input('guidRemDev', sql.Char(16), '')
+      .input('guidRemCambio', sql.Char(16), '')
+      .input('guidCaja', sql.Char(16), firstGuidCaja)
+      .input('ts', sql.Float, ts)
+      .input('sts', sql.Float, ts)
+      .query(`
+        INSERT INTO ControlComprobantes (GUID, FECHA, HORA, CONCEPTO, DEBE, HABER,
+          CONCILIADO, TIPOMOVIMIENTO, GUIDCLIENTE, GUIDREMITO,
+          GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, GUIDCAJADIARIA, ts, sts)
+        VALUES (@guid, @fecha, @hora, @concepto, @debe, @haber,
+          @conciliado, @tipoMov, @guidCliente, @guidRemito,
+          @guidRemDev, @guidRemCambio, @guidCaja, @ts, @sts)
+      `);
+
+    // 5. Recalcular saldo del cliente via SP
     await tx.request()
       .input('guid', sql.Char(16), guidCliente)
-      .query(`EXEC SP_RecalcularSaldoCliente @GuidCliente = @guid`);
+      .query(`EXEC SP_RecalcularSaldoCliente @guid_cliente = @guid`);
 
-    // 5. Generar factura (Recibo) si se solicitó
+    // 6. Generar factura (Recibo) si se solicitó
     let guidFactura = null;
     let facturaNumero = null;
     if (emitirFactura) {
