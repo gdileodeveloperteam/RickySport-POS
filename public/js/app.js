@@ -1927,11 +1927,11 @@ function ToggleFormNuevoCliente() {
         <div class="row g-2 mt-1">
           <div class="col-md-4">
             <label class="form-label">Nombre <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="ncNombre" maxlength="255">
+            <input type="text" class="form-control text-uppercase" id="ncNombre" maxlength="255" style="text-transform:uppercase">
           </div>
           <div class="col-md-4">
             <label class="form-label">Direcci&oacute;n</label>
-            <input type="text" class="form-control" id="ncDireccion" maxlength="255">
+            <input type="text" class="form-control text-uppercase" id="ncDireccion" maxlength="255" style="text-transform:uppercase">
           </div>
           <div class="col-md-4">
             <label class="form-label">Email <span class="text-danger">*</span></label>
@@ -1944,10 +1944,34 @@ function ToggleFormNuevoCliente() {
             <input type="text" class="form-control" id="ncCelular" placeholder="Min. 10 d&iacute;gitos" maxlength="20" required>
           </div>
           <div class="col-md-4">
+            <label class="form-label">Nombre Empresa</label>
+            <input type="text" class="form-control text-uppercase" id="ncNombreEmpresa" maxlength="100" style="text-transform:uppercase">
+          </div>
+          <div class="col-md-4">
             <label class="form-label">L&iacute;mite de Cr&eacute;dito</label>
             <input type="number" class="form-control" id="ncLimiteCredito" value="0" step="0.01">
           </div>
-          <div class="col-md-4 d-flex align-items-end gap-2">
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-md-3">
+            <label class="form-label">Provincia</label>
+            <input type="text" class="form-control text-uppercase" id="ncProvincia" maxlength="255" style="text-transform:uppercase">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Localidad</label>
+            <input type="text" class="form-control text-uppercase" id="ncLocalidad" maxlength="255" style="text-transform:uppercase">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">C&oacute;d. Postal</label>
+            <input type="text" class="form-control text-uppercase" id="ncCodigoPostal" maxlength="6" style="text-transform:uppercase">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Observaciones</label>
+            <input type="text" class="form-control text-uppercase" id="ncObservaciones" maxlength="5000" style="text-transform:uppercase">
+          </div>
+        </div>
+        <div class="row g-2 mt-2">
+          <div class="col-md-12 d-flex gap-2">
             <button class="btn btn-success" onclick="GuardarNuevoCliente()"><i class="bi bi-check-circle me-1"></i>Guardar Cliente</button>
             <button class="btn btn-secondary" onclick="ToggleFormNuevoCliente()">Cancelar</button>
           </div>
@@ -1992,11 +2016,16 @@ async function GuardarNuevoCliente() {
   const tipoIva = document.getElementById('ncTipoIva').value;
   const documento = document.getElementById('ncDocumento').value.trim();
   const cuit = document.getElementById('ncCuit').value.trim();
-  const nombre = document.getElementById('ncNombre').value.trim();
-  const direccion = document.getElementById('ncDireccion').value.trim();
+  const nombre = document.getElementById('ncNombre').value.trim().toUpperCase();
+  const direccion = document.getElementById('ncDireccion').value.trim().toUpperCase();
   const email = document.getElementById('ncEmail').value.trim();
   const celular = document.getElementById('ncCelular').value.trim();
   const limiteCredito = document.getElementById('ncLimiteCredito').value;
+  const provincia = document.getElementById('ncProvincia').value.trim().toUpperCase();
+  const localidad = document.getElementById('ncLocalidad').value.trim().toUpperCase();
+  const codigoPostal = document.getElementById('ncCodigoPostal').value.trim().toUpperCase();
+  const observaciones = document.getElementById('ncObservaciones').value.trim().toUpperCase();
+  const nombreEmpresa = document.getElementById('ncNombreEmpresa').value.trim().toUpperCase();
 
   const esCF = tipoIva === 'CONSUMIDOR FINAL';
 
@@ -2040,7 +2069,8 @@ async function GuardarNuevoCliente() {
     const result = await API.CreateCliente({
       nombre, documento: documento.replace(/\./g, ''), cuit, direccion, email, celular,
       tipoIva, tipoFactura, codigoDocumentoAfip,
-      limiteCredito: limiteCredito !== '' ? parseFloat(limiteCredito) : null
+      limiteCredito: limiteCredito !== '' ? parseFloat(limiteCredito) : null,
+      provincia, localidad, codigoPostal, observaciones, nombreEmpresa
     });
 
     ShowToast('Cliente', 'Creado exitosamente', 'success');

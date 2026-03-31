@@ -1,32 +1,40 @@
 const { getPool, sql } = require('../pool');
 const { newGuid, tsNow, dateToClarion, todayAR, dateToInt, timeToInt } = require('../../utils/guidHelper');
 
-async function Create({ nombre, documento, cuit, direccion, email, celular, tipoIva, tipoFactura, codigoDocumentoAfip, limiteCredito }) {
+async function Create({ nombre, documento, cuit, direccion, email, celular, tipoIva, tipoFactura, codigoDocumentoAfip, limiteCredito, provincia, localidad, codigoPostal, observaciones, nombreEmpresa }) {
   const pool = await getPool();
   const guid = newGuid();
   const ts = tsNow();
+  const upper = v => (v || '').toUpperCase();
   const idResult = await pool.request().query(`SELECT ISNULL(MAX(CODIGO_CLIENTE), 0) + 1 AS Next FROM Clientes`);
   const codigoCliente = idResult.recordset[0].Next;
   await pool.request()
     .input('guid', sql.Char(16), guid)
     .input('codigoCliente', sql.Int, codigoCliente)
-    .input('nombre', sql.VarChar(255), nombre)
+    .input('nombre', sql.VarChar(255), upper(nombre))
     .input('documento', sql.VarChar(20), documento || '')
     .input('cuit', sql.VarChar(20), cuit || '')
-    .input('direccion', sql.VarChar(255), direccion || '')
+    .input('direccion', sql.VarChar(255), upper(direccion))
     .input('email', sql.VarChar(255), email || '')
     .input('celular', sql.VarChar(60), celular || '')
     .input('tipoIva', sql.VarChar(40), tipoIva || 'CONSUMIDOR FINAL')
     .input('tipoFactura', sql.Char(1), tipoFactura || 'B')
     .input('codigoDocumentoAfip', sql.SmallInt, codigoDocumentoAfip || 96)
     .input('limiteCredito', sql.Decimal(11, 2), limiteCredito != null ? limiteCredito : null)
+    .input('provincia', sql.VarChar(255), upper(provincia))
+    .input('localidad', sql.VarChar(255), upper(localidad))
+    .input('codigoPostal', sql.Char(6), upper(codigoPostal))
+    .input('observaciones', sql.VarChar(5000), upper(observaciones))
+    .input('nombreEmpresa', sql.Char(100), upper(nombreEmpresa))
     .input('ts', sql.Float, ts)
     .input('sts', sql.Float, ts)
     .query(`
       INSERT INTO Clientes (GUID, CODIGO_CLIENTE, NOMBRE, DOCUMENTO, CUIT, DIRECCION, EMAIL, CELULAR,
-        TIPO_IVA, TIPO_FACTURA, CODIGO_DOCUMENTO_AFIP, SALDO, LIMITE_CREDITO, ts, sts)
+        TIPO_IVA, TIPO_FACTURA, CODIGO_DOCUMENTO_AFIP, SALDO, LIMITE_CREDITO,
+        PROVINCIA, LOCALIDAD, CODIGO_POSTAL, OBSERVACIONES, NOMBRE_EMPRESA, ts, sts)
       VALUES (@guid, @codigoCliente, @nombre, @documento, @cuit, @direccion, @email, @celular,
-        @tipoIva, @tipoFactura, @codigoDocumentoAfip, 0, @limiteCredito, @ts, @sts)
+        @tipoIva, @tipoFactura, @codigoDocumentoAfip, 0, @limiteCredito,
+        @provincia, @localidad, @codigoPostal, @observaciones, @nombreEmpresa, @ts, @sts)
     `);
   return { guid, codigoCliente };
 }
