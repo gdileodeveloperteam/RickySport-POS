@@ -6873,42 +6873,66 @@ async function BuscarUsuarios() {
   } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
 }
 
-function MostrarFormUsuario(usuario) {
+let _bancosCuentasUsuarios = [];
+
+async function MostrarFormUsuario(usuario) {
   const esEdicion = !!usuario;
   const container = document.getElementById('formUsuarioContainer');
+
+  // Cargar bancos cuentas
+  try { _bancosCuentasUsuarios = await API.GetBancosCuentas(); } catch (e) { _bancosCuentasUsuarios = []; }
+
   const sucOpts = State.sucursales.map(s => {
     const sel = usuario && (usuario.GUIDSUCURSALES || '').trim() === s.GUID.trim() ? 'selected' : '';
-    return `<option value="${s.GUID.trim()}" ${sel}>${(s.NOMBRE || '').trim()}</option>`;
+    return `<option value="${s.GUID.trim()}" data-guidcfg="${(s.GUIDCONFIGURACION || '').trim()}" ${sel}>${(s.NOMBRE || '').trim()}</option>`;
   }).join('');
+
+  const bcOpts = _bancosCuentasUsuarios.map(bc => {
+    const sel = usuario && (usuario.GUIDBANCOSCUENTAS || '').trim() === bc.GUID.trim() ? 'selected' : '';
+    const label = `${(bc.NombreBanco || '').trim()} - ${(bc.NUMEROCUENTA || '').trim()}${bc.ALIAS ? ' (' + bc.ALIAS.trim() + ')' : ''}`;
+    return `<option value="${bc.GUID.trim()}" ${sel}>${label}</option>`;
+  }).join('');
+
+  // Determinar guidconfiguracion inicial
+  const guidCfgInicial = esEdicion ? (usuario.GUIDCONFIGURACION || '').trim() : '';
+
   container.innerHTML = `
     <div class="card border-primary mb-3">
       <div class="card-body">
         <h6 class="fw-semibold mb-3"><i class="bi bi-${esEdicion ? 'pencil' : 'person-plus'} me-1"></i>${esEdicion ? 'Editar' : 'Nuevo'} Usuario</h6>
         <input type="hidden" id="usrGuid" value="${esEdicion ? usuario.GUID.trim() : ''}">
+        <input type="hidden" id="usrGuidConfiguracion" value="${guidCfgInicial}">
         <div class="row g-2">
           <div class="col-md-2">
             <label class="form-label">ID (3 letras) <span class="text-danger">*</span></label>
             <input type="text" class="form-control text-uppercase" id="usrId" maxlength="3" value="${esEdicion ? (usuario.ID || '').trim() : ''}">
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Nombre <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="usrNombre" maxlength="40" value="${esEdicion ? (usuario.NOMBRE || '').trim() : ''}">
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label">Clave</label>
             <input type="text" class="form-control" id="usrClave" maxlength="20" value="${esEdicion ? (usuario.CLAVE || '').trim() : ''}">
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label">Nivel</label>
             <input type="number" class="form-control" id="usrNivel" min="0" max="99" value="${esEdicion ? (usuario.NIVEL || 0) : 0}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Sucursal</label>
+            <select class="form-select" id="usrSucursal" onchange="OnUsrSucursalChange()">
+              <option value="">-- Sin asignar --</option>
+              ${sucOpts}
+            </select>
           </div>
         </div>
         <div class="row g-2 mt-1">
           <div class="col-md-4">
-            <label class="form-label">Sucursal</label>
-            <select class="form-select" id="usrSucursal">
+            <label class="form-label">Cuenta Banco</label>
+            <select class="form-select" id="usrBancoCuenta">
               <option value="">-- Sin asignar --</option>
-              ${sucOpts}
+              ${bcOpts}
             </select>
           </div>
           <div class="col-md-8 d-flex align-items-end gap-2">
@@ -6921,11 +6945,18 @@ function MostrarFormUsuario(usuario) {
   `;
 }
 
+function OnUsrSucursalChange() {
+  const sel = document.getElementById('usrSucursal');
+  const opt = sel.options[sel.selectedIndex];
+  const guidCfg = opt?.dataset?.guidcfg || '';
+  document.getElementById('usrGuidConfiguracion').value = guidCfg;
+}
+
 async function EditarUsuario(guid) {
   try {
     const usuario = await API.GetUsuarioByGuid(guid);
     if (!usuario) { ShowToast('Error', 'Usuario no encontrado', 'error'); return; }
-    MostrarFormUsuario(usuario);
+    await MostrarFormUsuario(usuario);
   } catch (err) { ShowToast('Error', err.message, 'error'); }
 }
 
@@ -6936,11 +6967,13 @@ async function GuardarUsuario() {
   const clave = document.getElementById('usrClave').value.trim();
   const nivel = parseInt(document.getElementById('usrNivel').value) || 0;
   const guidsucursales = document.getElementById('usrSucursal').value;
+  const guidconfiguracion = document.getElementById('usrGuidConfiguracion').value;
+  const guidbancoscuentas = document.getElementById('usrBancoCuenta').value;
 
   if (!id || id.length > 3) { ShowToast('Error', 'El ID es obligatorio (max 3 caracteres)', 'error'); return; }
   if (!nombre) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
 
-  const payload = { id, nombre, clave, nivel, guidsucursales };
+  const payload = { id, nombre, clave, nivel, guidsucursales, guidconfiguracion, guidbancoscuentas };
 
   try {
     if (guid) {
