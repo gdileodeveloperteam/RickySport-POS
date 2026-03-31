@@ -94,6 +94,7 @@ const API = (function () {
     return Request('/sucursales');
   }
   async function GetSucursalByGuid(guid) { return Request(`/sucursales/${guid}`); }
+  async function GetConfiguraciones() { return Request('/sucursales/configuraciones'); }
   async function CreateSucursal(data) { return Request('/sucursales', { method: 'POST', body: JSON.stringify(data) }); }
   async function UpdateSucursal(guid, data) { return Request(`/sucursales/${guid}`, { method: 'PUT', body: JSON.stringify(data) }); }
   async function DeleteSucursal(guid) { return Request(`/sucursales/${guid}`, { method: 'DELETE' }); }
@@ -335,7 +336,7 @@ const API = (function () {
     Login, GetUsuarios, GetUsuarioByGuid, CreateUsuario, UpdateUsuario, DeleteUsuario,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
     GetClientes, CreateCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
-    GetSucursales, GetSucursalByGuid, CreateSucursal, UpdateSucursal, DeleteSucursal, GetVendedores,
+    GetSucursales, GetSucursalByGuid, GetConfiguraciones, CreateSucursal, UpdateSucursal, DeleteSucursal, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
     GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,
     CreateVenta, GetVentas, GetVentaDetalle, GetFacturaDetalle, GetResumenPagos, GetVentasPorSucursal, GetTotalesDevCambios,

@@ -20,7 +20,18 @@ async function GetByGuid(guid) {
   return result.recordset[0] || null;
 }
 
-async function Create({ nombre, cuit, puntoventa, cotizaciondolar, email, celular }) {
+async function GetConfiguraciones() {
+  const pool = await getPool();
+  const result = await pool.request().query(`
+    SELECT GUID, CODIGO_CONFIGURACION, NOMBREEMPRESA, CUIT
+    FROM Configuracion
+    WHERE (dts IS NULL OR dts = 0)
+    ORDER BY NOMBREEMPRESA
+  `);
+  return result.recordset;
+}
+
+async function Create({ nombre, cuit, puntoventa, cotizaciondolar, email, celular, guidconfiguracion }) {
   const pool = await getPool();
   const guid = newGuid();
   const ts = tsNow();
@@ -35,16 +46,17 @@ async function Create({ nombre, cuit, puntoventa, cotizaciondolar, email, celula
     .input('cotizaciondolar', sql.Decimal(13, 2), cotizaciondolar || 0)
     .input('email', sql.VarChar(255), email || '')
     .input('celular', sql.Char(20), celular || '')
+    .input('guidconfiguracion', sql.Char(16), guidconfiguracion || '')
     .input('ts', sql.Float, ts)
     .input('sts', sql.Float, ts)
     .query(`
-      INSERT INTO Sucursales (GUID, CODIGOSUCURSAL, NOMBRE, CUIT, PUNTOVENTA, COTIZACIONDOLAR, EMAIL, CELULAR, ts, sts)
-      VALUES (@guid, @codigoSucursal, @nombre, @cuit, @puntoventa, @cotizaciondolar, @email, @celular, @ts, @sts)
+      INSERT INTO Sucursales (GUID, CODIGOSUCURSAL, NOMBRE, CUIT, PUNTOVENTA, COTIZACIONDOLAR, EMAIL, CELULAR, GUIDCONFIGURACION, ts, sts)
+      VALUES (@guid, @codigoSucursal, @nombre, @cuit, @puntoventa, @cotizaciondolar, @email, @celular, @guidconfiguracion, @ts, @sts)
     `);
   return { guid, codigoSucursal };
 }
 
-async function Update(guid, { nombre, cuit, puntoventa, cotizaciondolar, email, celular }) {
+async function Update(guid, { nombre, cuit, puntoventa, cotizaciondolar, email, celular, guidconfiguracion }) {
   const pool = await getPool();
   const ts = tsNow();
   await pool.request()
@@ -55,11 +67,13 @@ async function Update(guid, { nombre, cuit, puntoventa, cotizaciondolar, email, 
     .input('cotizaciondolar', sql.Decimal(13, 2), cotizaciondolar || 0)
     .input('email', sql.VarChar(255), email || '')
     .input('celular', sql.Char(20), celular || '')
+    .input('guidconfiguracion', sql.Char(16), guidconfiguracion || '')
     .input('ts', sql.Float, ts)
     .query(`
       UPDATE Sucursales SET
         NOMBRE = @nombre, CUIT = @cuit, PUNTOVENTA = @puntoventa,
-        COTIZACIONDOLAR = @cotizaciondolar, EMAIL = @email, CELULAR = @celular, ts = @ts
+        COTIZACIONDOLAR = @cotizaciondolar, EMAIL = @email, CELULAR = @celular,
+        GUIDCONFIGURACION = @guidconfiguracion, ts = @ts
       WHERE GUID = @guid AND (dts IS NULL OR dts = 0)
     `);
   return { ok: true };
@@ -75,4 +89,4 @@ async function Delete(guid) {
   return { ok: true };
 }
 
-module.exports = { GetAll, GetByGuid, Create, Update, Delete };
+module.exports = { GetAll, GetByGuid, GetConfiguraciones, Create, Update, Delete };

@@ -9,6 +9,13 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get('/configuraciones', async (req, res, next) => {
+  try {
+    const data = await sucursalesRepo.GetConfiguraciones();
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
 router.get('/:guid', async (req, res, next) => {
   try {
     const data = await sucursalesRepo.GetByGuid(req.params.guid);

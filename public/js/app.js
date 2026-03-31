@@ -6657,11 +6657,14 @@ function RenderSucursales(container) {
   BuscarSucursales();
 }
 
+let _configuraciones = [];
+
 async function BuscarSucursales() {
   const search = (document.getElementById('sucursalSearch')?.value || '').trim().toUpperCase();
   const div = document.getElementById('sucursalesResultados');
   try {
-    const sucursales = await API.GetSucursales();
+    const [sucursales, configs] = await Promise.all([API.GetSucursales(), API.GetConfiguraciones()]);
+    _configuraciones = configs;
     let filtered = sucursales;
     if (search) {
       filtered = sucursales.filter(s => (s.NOMBRE || '').toUpperCase().includes(search));
@@ -6671,14 +6674,17 @@ async function BuscarSucursales() {
       <div class="table-responsive">
         <table class="table table-sm table-hover">
           <thead class="table-light">
-            <tr><th>C&oacute;digo</th><th>Nombre</th><th>CUIT</th><th>Punto Venta</th><th>Cotiz. D&oacute;lar</th><th>Email</th><th>Celular</th><th></th></tr>
+            <tr><th>C&oacute;digo</th><th>Nombre</th><th>Configuraci&oacute;n</th><th>CUIT</th><th>Punto Venta</th><th>Cotiz. D&oacute;lar</th><th>Email</th><th>Celular</th><th></th></tr>
           </thead>
           <tbody>
             ${filtered.map(s => {
               const nombre = (s.NOMBRE || '').trim();
+              const cfg = configs.find(c => c.GUID.trim() === (s.GUIDCONFIGURACION || '').trim());
+              const cfgNombre = cfg ? (cfg.NOMBREEMPRESA || '').trim() : '-';
               return `<tr>
                 <td>${s.CODIGOSUCURSAL}</td>
                 <td class="fw-semibold">${nombre}</td>
+                <td>${cfgNombre}</td>
                 <td>${(s.CUIT || '').trim()}</td>
                 <td>${s.PUNTOVENTA || 0}</td>
                 <td class="text-end">${FormatMoney(s.COTIZACIONDOLAR || 0)}</td>
@@ -6700,17 +6706,28 @@ async function BuscarSucursales() {
 function MostrarFormSucursal(sucursal) {
   const esEdicion = !!sucursal;
   const container = document.getElementById('formSucursalContainer');
+  const cfgOpts = _configuraciones.map(c => {
+    const sel = sucursal && (sucursal.GUIDCONFIGURACION || '').trim() === c.GUID.trim() ? 'selected' : '';
+    return `<option value="${c.GUID.trim()}" ${sel}>${(c.NOMBREEMPRESA || '').trim()}</option>`;
+  }).join('');
   container.innerHTML = `
     <div class="card border-primary mb-3">
       <div class="card-body">
         <h6 class="fw-semibold mb-3"><i class="bi bi-${esEdicion ? 'pencil' : 'building'} me-1"></i>${esEdicion ? 'Editar' : 'Nueva'} Sucursal</h6>
         <input type="hidden" id="sucGuid" value="${esEdicion ? sucursal.GUID.trim() : ''}">
         <div class="row g-2">
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Nombre <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="sucNombre" maxlength="255" value="${esEdicion ? (sucursal.NOMBRE || '').trim() : ''}">
           </div>
           <div class="col-md-3">
+            <label class="form-label">Configuraci&oacute;n</label>
+            <select class="form-select" id="sucConfiguracion">
+              <option value="">-- Sin asignar --</option>
+              ${cfgOpts}
+            </select>
+          </div>
+          <div class="col-md-2">
             <label class="form-label">CUIT</label>
             <input type="text" class="form-control" id="sucCuit" maxlength="13" value="${esEdicion ? (sucursal.CUIT || '').trim() : ''}">
           </div>
@@ -6718,13 +6735,13 @@ function MostrarFormSucursal(sucursal) {
             <label class="form-label">Punto Venta</label>
             <input type="number" class="form-control" id="sucPuntoVenta" min="0" value="${esEdicion ? (sucursal.PUNTOVENTA || 0) : 0}">
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label">Cotiz. D&oacute;lar</label>
             <input type="number" class="form-control" id="sucCotizDolar" step="0.01" min="0" value="${esEdicion ? (sucursal.COTIZACIONDOLAR || 0) : 0}">
           </div>
         </div>
         <div class="row g-2 mt-1">
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Email</label>
             <input type="email" class="form-control" id="sucEmail" maxlength="255" value="${esEdicion ? (sucursal.EMAIL || '').trim() : ''}">
           </div>
@@ -6732,7 +6749,7 @@ function MostrarFormSucursal(sucursal) {
             <label class="form-label">Celular</label>
             <input type="text" class="form-control" id="sucCelular" maxlength="20" value="${esEdicion ? (sucursal.CELULAR || '').trim() : ''}">
           </div>
-          <div class="col-md-5 d-flex align-items-end gap-2">
+          <div class="col-md-6 d-flex align-items-end gap-2">
             <button class="btn btn-primary" onclick="GuardarSucursal()"><i class="bi bi-check-circle me-1"></i>${esEdicion ? 'Actualizar' : 'Guardar'}</button>
             <button class="btn btn-secondary" onclick="document.getElementById('formSucursalContainer').innerHTML=''">Cancelar</button>
           </div>
@@ -6753,6 +6770,7 @@ async function EditarSucursal(guid) {
 async function GuardarSucursal() {
   const guid = document.getElementById('sucGuid').value;
   const nombre = document.getElementById('sucNombre').value.trim();
+  const guidconfiguracion = document.getElementById('sucConfiguracion').value;
   const cuit = document.getElementById('sucCuit').value.trim();
   const puntoventa = parseInt(document.getElementById('sucPuntoVenta').value) || 0;
   const cotizaciondolar = parseFloat(document.getElementById('sucCotizDolar').value) || 0;
@@ -6761,7 +6779,7 @@ async function GuardarSucursal() {
 
   if (!nombre) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
 
-  const payload = { nombre, cuit, puntoventa, cotizaciondolar, email, celular };
+  const payload = { nombre, cuit, puntoventa, cotizaciondolar, email, celular, guidconfiguracion };
 
   try {
     if (guid) {
