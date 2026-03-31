@@ -44,8 +44,8 @@ async function GetAll(search, page = 1, limit = 30) {
   let where = `WHERE (dts IS NULL OR dts = 0)`;
   const request = pool.request();
   if (search) {
-    where += ` AND (NOMBRE LIKE @search OR CUIT LIKE @search OR DOCUMENTO LIKE @search)`;
-    request.input('search', sql.VarChar, `%${search}%`);
+    where += ` AND (UPPER(NOMBRE) LIKE @search OR CUIT LIKE @search OR DOCUMENTO LIKE @search)`;
+    request.input('search', sql.VarChar, `%${search.toUpperCase()}%`);
   }
   const offset = (page - 1) * limit;
   request.input('offset', sql.Int, offset);
@@ -85,8 +85,8 @@ async function GetCtaCte(search) {
   `;
   const request = pool.request();
   if (search) {
-    query += ` AND (NOMBRE LIKE @search OR CUIT LIKE @search OR DOCUMENTO LIKE @search)`;
-    request.input('search', sql.VarChar, `%${search}%`);
+    query += ` AND (UPPER(NOMBRE) LIKE @search OR CUIT LIKE @search OR DOCUMENTO LIKE @search)`;
+    request.input('search', sql.VarChar, `%${search.toUpperCase()}%`);
   }
   query += ` ORDER BY NOMBRE`;
   const result = await request.query(query);
