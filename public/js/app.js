@@ -772,7 +772,8 @@ const POS = {
 
   async FacturaConsumidorFinal() {
     try {
-      const clientes = await API.GetClientes('CONSUMIDOR FINAL');
+      const resp = await API.GetClientes('CONSUMIDOR FINAL');
+      const clientes = resp.data || resp;
       const cf = clientes.find(c => (c.DOCUMENTO || '').trim() === '0');
       if (cf) {
         POS.cliente = cf;
@@ -1727,7 +1728,8 @@ function AbrirModalClientePago() {
     const val = input.value.trim();
     if (val.length < 2) { document.getElementById('listaClientes').innerHTML = ''; return; }
     try {
-      const clientes = esCtaCte ? await API.GetClientesCtaCte(val) : await API.GetClientes(val);
+      const resp = esCtaCte ? await API.GetClientesCtaCte(val) : await API.GetClientes(val);
+      const clientes = esCtaCte ? resp : (resp.data || resp);
 
       if (clientes.length === 0) {
         document.getElementById('listaClientes').innerHTML = esCtaCte
@@ -1877,7 +1879,8 @@ function AbrirModalCliente() {
     const val = input.value.trim();
     if (val.length < 2) { document.getElementById('listaClientes').innerHTML = ''; return; }
     try {
-      const clientes = await API.GetClientes(val);
+      const resp = await API.GetClientes(val);
+      const clientes = resp.data || resp;
       document.getElementById('listaClientes').innerHTML = clientes.slice(0, 20).map(c => `
         <a href="#" class="list-group-item list-group-item-action" onclick="event.preventDefault(); POS.SeleccionarCliente(${JSON.stringify(c).replace(/"/g, '&quot;')})">
           <div class="d-flex justify-content-between">
@@ -2956,7 +2959,8 @@ function InitClienteSelectorEvents(idPrefix) {
     const lista = document.getElementById(`${idPrefix}ListaClientes`);
     if (val.length < 2) { lista.innerHTML = ''; return; }
     try {
-      const clientes = await API.GetClientes(val);
+      const resp = await API.GetClientes(val);
+      const clientes = resp.data || resp;
       if (clientes.length === 0) {
         lista.innerHTML = '<div class="alert alert-info py-2">No se encontraron clientes</div>';
         return;
