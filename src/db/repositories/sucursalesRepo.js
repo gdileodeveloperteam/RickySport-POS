@@ -23,7 +23,7 @@ async function GetByGuid(guid) {
 async function GetConfiguraciones() {
   const pool = await getPool();
   const result = await pool.request().query(`
-    SELECT GUID, CODIGO_CONFIGURACION, NOMBREEMPRESA, CUIT
+    SELECT GUID, NOMBREEMPRESA, CUIT
     FROM Configuracion
     WHERE (dts IS NULL OR dts = 0)
     ORDER BY NOMBREEMPRESA
