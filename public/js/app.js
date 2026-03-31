@@ -6879,8 +6879,11 @@ async function MostrarFormUsuario(usuario) {
   const esEdicion = !!usuario;
   const container = document.getElementById('formUsuarioContainer');
 
-  // Cargar bancos cuentas
-  try { _bancosCuentasUsuarios = await API.GetBancosCuentas(); } catch (e) { _bancosCuentasUsuarios = []; }
+  // Cargar bancos cuentas y filtrar solo CAJA FISICA
+  try {
+    const todas = await API.GetBancosCuentas();
+    _bancosCuentasUsuarios = todas.filter(bc => (bc.TIPOCUENTA || '').trim().toUpperCase() === 'CAJA FISICA');
+  } catch (e) { _bancosCuentasUsuarios = []; }
 
   const sucOpts = State.sucursales.map(s => {
     const sel = usuario && (usuario.GUIDSUCURSALES || '').trim() === s.GUID.trim() ? 'selected' : '';
