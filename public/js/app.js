@@ -1936,7 +1936,11 @@ function ToggleFormNuevoCliente() {
             <label class="form-label">Celular <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="ncCelular" placeholder="Min. 10 d&iacute;gitos" maxlength="20" required>
           </div>
-          <div class="col-md-8 d-flex align-items-end gap-2">
+          <div class="col-md-4">
+            <label class="form-label">L&iacute;mite de Cr&eacute;dito</label>
+            <input type="number" class="form-control" id="ncLimiteCredito" value="0" step="0.01">
+          </div>
+          <div class="col-md-4 d-flex align-items-end gap-2">
             <button class="btn btn-success" onclick="GuardarNuevoCliente()"><i class="bi bi-check-circle me-1"></i>Guardar Cliente</button>
             <button class="btn btn-secondary" onclick="ToggleFormNuevoCliente()">Cancelar</button>
           </div>
@@ -1985,6 +1989,7 @@ async function GuardarNuevoCliente() {
   const direccion = document.getElementById('ncDireccion').value.trim();
   const email = document.getElementById('ncEmail').value.trim();
   const celular = document.getElementById('ncCelular').value.trim();
+  const limiteCredito = document.getElementById('ncLimiteCredito').value;
 
   const esCF = tipoIva === 'CONSUMIDOR FINAL';
 
@@ -2027,7 +2032,8 @@ async function GuardarNuevoCliente() {
   try {
     const result = await API.CreateCliente({
       nombre, documento: documento.replace(/\./g, ''), cuit, direccion, email, celular,
-      tipoIva, tipoFactura, codigoDocumentoAfip
+      tipoIva, tipoFactura, codigoDocumentoAfip,
+      limiteCredito: limiteCredito !== '' ? parseFloat(limiteCredito) : null
     });
 
     ShowToast('Cliente', 'Creado exitosamente', 'success');
@@ -4945,18 +4951,21 @@ async function BuscarClientes() {
       <div class="table-responsive">
         <table class="table table-sm table-hover">
           <thead class="table-light">
-            <tr><th>Nombre</th><th>CUIT</th><th>Documento</th><th>Celular</th><th>Email</th><th class="text-end">Saldo</th><th></th></tr>
+            <tr><th>Nombre</th><th>CUIT</th><th>Documento</th><th>Celular</th><th>Email</th><th class="text-end">L&iacute;mite Cr&eacute;dito</th><th class="text-end">Saldo</th><th></th></tr>
           </thead>
           <tbody>
             ${clientes.map(c => {
               const nombre = (c.NOMBRE || '').trim();
               const saldo = c.SALDO || 0;
+              const limite = c.LIMITE_CREDITO;
+              const limiteText = limite == null ? '-' : limite < 0 ? 'Ilimitado' : FormatMoney(limite);
               return `<tr>
                 <td class="fw-semibold">${nombre}</td>
                 <td>${(c.CUIT || '').trim()}</td>
                 <td>${(c.DOCUMENTO || '').trim()}</td>
                 <td>${(c.CELULAR || '').trim()}</td>
                 <td>${(c.EMAIL || '').trim()}</td>
+                <td class="text-end">${limiteText}</td>
                 <td class="text-end ${saldo > 0 ? 'text-danger' : saldo < 0 ? 'text-success' : ''}">${FormatMoney(saldo)}</td>
                 <td>
                   <button class="btn btn-sm btn-outline-primary" onclick="VerMovimientosCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')">

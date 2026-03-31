@@ -1,7 +1,7 @@
 const { getPool, sql } = require('../pool');
 const { newGuid, tsNow, dateToClarion, todayAR, dateToInt, timeToInt } = require('../../utils/guidHelper');
 
-async function Create({ nombre, documento, cuit, direccion, email, celular, tipoIva, tipoFactura, codigoDocumentoAfip }) {
+async function Create({ nombre, documento, cuit, direccion, email, celular, tipoIva, tipoFactura, codigoDocumentoAfip, limiteCredito }) {
   const pool = await getPool();
   const guid = newGuid();
   const ts = tsNow();
@@ -19,13 +19,14 @@ async function Create({ nombre, documento, cuit, direccion, email, celular, tipo
     .input('tipoIva', sql.VarChar(40), tipoIva || 'CONSUMIDOR FINAL')
     .input('tipoFactura', sql.Char(1), tipoFactura || 'B')
     .input('codigoDocumentoAfip', sql.SmallInt, codigoDocumentoAfip || 96)
+    .input('limiteCredito', sql.Decimal(11, 2), limiteCredito != null ? limiteCredito : null)
     .input('ts', sql.Float, ts)
     .input('sts', sql.Float, ts)
     .query(`
       INSERT INTO Clientes (GUID, CODIGO_CLIENTE, NOMBRE, DOCUMENTO, CUIT, DIRECCION, EMAIL, CELULAR,
-        TIPO_IVA, TIPO_FACTURA, CODIGO_DOCUMENTO_AFIP, SALDO, ts, sts)
+        TIPO_IVA, TIPO_FACTURA, CODIGO_DOCUMENTO_AFIP, SALDO, LIMITE_CREDITO, ts, sts)
       VALUES (@guid, @codigoCliente, @nombre, @documento, @cuit, @direccion, @email, @celular,
-        @tipoIva, @tipoFactura, @codigoDocumentoAfip, 0, @ts, @sts)
+        @tipoIva, @tipoFactura, @codigoDocumentoAfip, 0, @limiteCredito, @ts, @sts)
     `);
   return { guid, codigoCliente };
 }
