@@ -4934,12 +4934,16 @@ async function ToggleDetalleCompra(guid, rowId) {
 // ============================================================================
 // SECCIÓN: CLIENTES — Browse + Movimientos + Comprobantes
 // ============================================================================
+let _clientesPage = 1;
+let _clientesSearchTimer = null;
+
 function RenderClientes(container) {
+  _clientesPage = 1;
   container.innerHTML = `
     <h4 class="mb-3"><i class="bi bi-people me-2"></i>Clientes</h4>
     <div class="card shadow-sm mb-3">
       <div class="card-body">
-        <input type="text" id="clienteSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIT..." onkeyup="BuscarClientes()">
+        <input type="text" id="clienteSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIT..." oninput="OnClienteSearchInput()">
       </div>
     </div>
     <div id="clientesResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
@@ -4947,13 +4951,36 @@ function RenderClientes(container) {
   BuscarClientes();
 }
 
+function OnClienteSearchInput() {
+  clearTimeout(_clientesSearchTimer);
+  _clientesSearchTimer = setTimeout(() => { _clientesPage = 1; BuscarClientes(); }, 300);
+}
 
-async function BuscarClientes() {
+async function BuscarClientes(page) {
+  if (page) _clientesPage = page;
   const search = (document.getElementById('clienteSearch')?.value || '').trim();
   const div = document.getElementById('clientesResultados');
   try {
-    const clientes = await API.GetClientes(search || undefined);
+    const resp = await API.GetClientes(search || undefined, _clientesPage, 30);
+    const clientes = resp.data;
+    const pag = resp.pagination;
     if (clientes.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron clientes.</div>'; return; }
+
+    const paginacion = pag.totalPages > 1 ? `
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <small class="text-muted">Mostrando ${(pag.page - 1) * pag.limit + 1}-${Math.min(pag.page * pag.limit, pag.total)} de ${pag.total}</small>
+        <nav>
+          <ul class="pagination pagination-sm mb-0">
+            <li class="page-item ${pag.page <= 1 ? 'disabled' : ''}"><a class="page-link" href="#" onclick="BuscarClientes(${pag.page - 1});return false">&laquo;</a></li>
+            ${Array.from({length: pag.totalPages}, (_, i) => i + 1).filter(p => p === 1 || p === pag.totalPages || Math.abs(p - pag.page) <= 2).map(p =>
+              `<li class="page-item ${p === pag.page ? 'active' : ''}"><a class="page-link" href="#" onclick="BuscarClientes(${p});return false">${p}</a></li>`
+            ).join('')}
+            <li class="page-item ${pag.page >= pag.totalPages ? 'disabled' : ''}"><a class="page-link" href="#" onclick="BuscarClientes(${pag.page + 1});return false">&raquo;</a></li>
+          </ul>
+        </nav>
+      </div>
+    ` : '';
+
     div.innerHTML = `
       <div class="table-responsive">
         <table class="table table-sm table-hover">
@@ -4984,6 +5011,7 @@ async function BuscarClientes() {
           </tbody>
         </table>
       </div>
+      ${paginacion}
     `;
   } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
 }

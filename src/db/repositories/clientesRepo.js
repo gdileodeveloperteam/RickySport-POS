@@ -31,23 +31,31 @@ async function Create({ nombre, documento, cuit, direccion, email, celular, tipo
   return { guid, codigoCliente };
 }
 
-async function GetAll(search) {
+async function GetAll(search, page = 1, limit = 30) {
   const pool = await getPool();
-  let query = `
+  let where = `WHERE (dts IS NULL OR dts = 0)`;
+  const request = pool.request();
+  if (search) {
+    where += ` AND (NOMBRE LIKE @search OR CUIT LIKE @search OR DOCUMENTO LIKE @search)`;
+    request.input('search', sql.VarChar, `%${search}%`);
+  }
+  const offset = (page - 1) * limit;
+  request.input('offset', sql.Int, offset);
+  request.input('limit', sql.Int, limit);
+
+  const countResult = await request.query(`SELECT COUNT(*) AS total FROM Clientes ${where}`);
+  const total = countResult.recordset[0].total;
+
+  const result = await request.query(`
     SELECT GUID, CODIGO_CLIENTE, NOMBRE, CUENTA, DIRECCION, CUIT, DOCUMENTO,
            EMAIL, TELEFONO, CELULAR, TIPO_IVA, TIPO_FACTURA, SALDO,
            LIMITE_CREDITO, PERMITECREDITO, LOCALIDAD, PROVINCIA
     FROM Clientes
-    WHERE (dts IS NULL OR dts = 0)
-  `;
-  const request = pool.request();
-  if (search) {
-    query += ` AND (NOMBRE LIKE @search OR CUIT LIKE @search OR DOCUMENTO LIKE @search)`;
-    request.input('search', sql.VarChar, `%${search}%`);
-  }
-  query += ` ORDER BY NOMBRE`;
-  const result = await request.query(query);
-  return result.recordset;
+    ${where}
+    ORDER BY NOMBRE
+    OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+  `);
+  return { data: result.recordset, pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } };
 }
 
 async function GetByGuid(guid) {

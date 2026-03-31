@@ -45,9 +45,12 @@ const API = (function () {
   }
 
   // Clientes
-  async function GetClientes(search) {
-    const q = search ? `?search=${encodeURIComponent(search)}` : '';
-    return Request(`/clientes${q}`);
+  async function GetClientes(search, page, limit) {
+    const q = new URLSearchParams();
+    if (search) q.set('search', search);
+    if (page) q.set('page', page);
+    if (limit) q.set('limit', limit);
+    return Request(`/clientes?${q.toString()}`);
   }
 
   async function CreateCliente(data) {

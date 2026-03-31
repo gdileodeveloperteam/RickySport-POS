@@ -4,7 +4,9 @@ const clientesRepo = require('../../db/repositories/clientesRepo');
 
 router.get('/', async (req, res, next) => {
   try {
-    const data = await clientesRepo.GetAll(req.query.search);
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 30, 200);
+    const data = await clientesRepo.GetAll(req.query.search, page, limit);
     res.json(data);
   } catch (err) { next(err); }
 });
