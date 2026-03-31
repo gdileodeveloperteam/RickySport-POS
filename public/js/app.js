@@ -6916,7 +6916,10 @@ async function MostrarFormUsuario(usuario) {
           </div>
           <div class="col-md-2">
             <label class="form-label">Clave</label>
-            <input type="text" class="form-control" id="usrClave" maxlength="20" value="${esEdicion ? (usuario.CLAVE || '').trim() : ''}">
+            <div class="input-group">
+              <input type="password" class="form-control" id="usrClave" maxlength="20" value="${esEdicion ? (usuario.CLAVE || '').trim() : ''}">
+              <button class="btn btn-outline-secondary" type="button" onmousedown="document.getElementById('usrClave').type='text'" onmouseup="document.getElementById('usrClave').type='password'" onmouseleave="document.getElementById('usrClave').type='password'"><i class="bi bi-eye"></i></button>
+            </div>
           </div>
           <div class="col-md-2">
             <label class="form-label">Nivel</label>
