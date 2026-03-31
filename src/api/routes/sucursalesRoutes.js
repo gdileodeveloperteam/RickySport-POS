@@ -17,4 +17,16 @@ router.get('/:guid', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.post('/', async (req, res, next) => {
+  try { res.status(201).json(await sucursalesRepo.Create(req.body)); } catch (err) { next(err); }
+});
+
+router.put('/:guid', async (req, res, next) => {
+  try { res.json(await sucursalesRepo.Update(req.params.guid, req.body)); } catch (err) { next(err); }
+});
+
+router.delete('/:guid', async (req, res, next) => {
+  try { res.json(await sucursalesRepo.Delete(req.params.guid)); } catch (err) { next(err); }
+});
+
 module.exports = router;

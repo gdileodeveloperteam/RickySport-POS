@@ -61,9 +61,9 @@ async function Create({ id, nombre, clave, nivel, guidsucursales, guidbancoscuen
     .input('ts', sql.Float, ts)
     .input('sts', sql.Float, ts)
     .query(`
-      INSERT INTO Usuarios (GUID, CODIGO_USUARIO, CODIGOUSUARIO, ID, NOMBRE, CLAVE, NIVEL,
+      INSERT INTO Usuarios (GUID, CODIGOUSUARIO, ID, NOMBRE, CLAVE, NIVEL,
         GUIDSUCURSALES, GUIDBANCOSCUENTAS, GUIDCONFIGURACION, ts, sts)
-      VALUES (@guid, @codigoUsuario, @codigoUsuario, @id, @nombre, @clave, @nivel,
+      VALUES (@guid, @codigoUsuario, @id, @nombre, @clave, @nivel,
         @guidsucursales, @guidbancoscuentas, @guidconfiguracion, @ts, @sts)
     `);
   return { guid, codigoUsuario };

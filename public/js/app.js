@@ -241,6 +241,7 @@ async function InitApp() {
     // Mostrar menu Usuarios solo para admin (CODIGOUSUARIO=1, ID=AJE)
     const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
     document.getElementById('navUsuarios').classList.toggle('d-none', !esAdmin);
+    document.getElementById('navSucursales').classList.toggle('d-none', !esAdmin);
 
     App.Navigate('pos');
   } catch (err) {
@@ -325,6 +326,7 @@ const App = {
       case 'clientes': RenderClientes(main); break;
       case 'empleados': RenderEmpleados(main); break;
       case 'bancos': RenderBancos(main); break;
+      case 'sucursales': RenderSucursales(main); break;
       case 'usuarios': RenderUsuarios(main); break;
     }
   },
@@ -6628,6 +6630,161 @@ async function EliminarTipoCobroPago(guid) {
     await API.DeleteTipoCobroPago(guid);
     ShowToast('Tipo Cobro/Pago', 'Eliminado', 'success');
     LoadTiposCobrosPagos();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+// ============================================================================
+// SECCIÓN: Sucursales — CRUD (solo admin)
+// ============================================================================
+
+function RenderSucursales(container) {
+  const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
+  if (!esAdmin) {
+    container.innerHTML = '<div class="alert alert-danger">No tiene permisos para acceder a esta secci&oacute;n.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <h4 class="mb-3"><i class="bi bi-building me-2"></i>Sucursales</h4>
+    <div class="card shadow-sm mb-3">
+      <div class="card-body d-flex gap-2 align-items-center">
+        <input type="text" id="sucursalSearch" class="form-control" placeholder="Buscar por nombre..." onkeyup="BuscarSucursales()">
+        <button class="btn btn-success" onclick="MostrarFormSucursal()"><i class="bi bi-plus-circle me-1"></i>Nueva</button>
+      </div>
+    </div>
+    <div id="formSucursalContainer"></div>
+    <div id="sucursalesResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
+  `;
+  BuscarSucursales();
+}
+
+async function BuscarSucursales() {
+  const search = (document.getElementById('sucursalSearch')?.value || '').trim().toUpperCase();
+  const div = document.getElementById('sucursalesResultados');
+  try {
+    const sucursales = await API.GetSucursales();
+    let filtered = sucursales;
+    if (search) {
+      filtered = sucursales.filter(s => (s.NOMBRE || '').toUpperCase().includes(search));
+    }
+    if (filtered.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron sucursales.</div>'; return; }
+    div.innerHTML = `
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead class="table-light">
+            <tr><th>C&oacute;digo</th><th>Nombre</th><th>CUIT</th><th>Punto Venta</th><th>Cotiz. D&oacute;lar</th><th>Email</th><th>Celular</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${filtered.map(s => {
+              const nombre = (s.NOMBRE || '').trim();
+              return `<tr>
+                <td>${s.CODIGOSUCURSAL}</td>
+                <td class="fw-semibold">${nombre}</td>
+                <td>${(s.CUIT || '').trim()}</td>
+                <td>${s.PUNTOVENTA || 0}</td>
+                <td class="text-end">${FormatMoney(s.COTIZACIONDOLAR || 0)}</td>
+                <td>${(s.EMAIL || '').trim()}</td>
+                <td>${(s.CELULAR || '').trim()}</td>
+                <td class="text-end">
+                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarSucursal('${s.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarSucursal('${s.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-trash"></i></button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+function MostrarFormSucursal(sucursal) {
+  const esEdicion = !!sucursal;
+  const container = document.getElementById('formSucursalContainer');
+  container.innerHTML = `
+    <div class="card border-primary mb-3">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3"><i class="bi bi-${esEdicion ? 'pencil' : 'building'} me-1"></i>${esEdicion ? 'Editar' : 'Nueva'} Sucursal</h6>
+        <input type="hidden" id="sucGuid" value="${esEdicion ? sucursal.GUID.trim() : ''}">
+        <div class="row g-2">
+          <div class="col-md-4">
+            <label class="form-label">Nombre <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="sucNombre" maxlength="255" value="${esEdicion ? (sucursal.NOMBRE || '').trim() : ''}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">CUIT</label>
+            <input type="text" class="form-control" id="sucCuit" maxlength="13" value="${esEdicion ? (sucursal.CUIT || '').trim() : ''}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Punto Venta</label>
+            <input type="number" class="form-control" id="sucPuntoVenta" min="0" value="${esEdicion ? (sucursal.PUNTOVENTA || 0) : 0}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Cotiz. D&oacute;lar</label>
+            <input type="number" class="form-control" id="sucCotizDolar" step="0.01" min="0" value="${esEdicion ? (sucursal.COTIZACIONDOLAR || 0) : 0}">
+          </div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-md-4">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" id="sucEmail" maxlength="255" value="${esEdicion ? (sucursal.EMAIL || '').trim() : ''}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Celular</label>
+            <input type="text" class="form-control" id="sucCelular" maxlength="20" value="${esEdicion ? (sucursal.CELULAR || '').trim() : ''}">
+          </div>
+          <div class="col-md-5 d-flex align-items-end gap-2">
+            <button class="btn btn-primary" onclick="GuardarSucursal()"><i class="bi bi-check-circle me-1"></i>${esEdicion ? 'Actualizar' : 'Guardar'}</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('formSucursalContainer').innerHTML=''">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function EditarSucursal(guid) {
+  try {
+    const sucursal = await API.GetSucursalByGuid(guid);
+    if (!sucursal) { ShowToast('Error', 'Sucursal no encontrada', 'error'); return; }
+    MostrarFormSucursal(sucursal);
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+async function GuardarSucursal() {
+  const guid = document.getElementById('sucGuid').value;
+  const nombre = document.getElementById('sucNombre').value.trim();
+  const cuit = document.getElementById('sucCuit').value.trim();
+  const puntoventa = parseInt(document.getElementById('sucPuntoVenta').value) || 0;
+  const cotizaciondolar = parseFloat(document.getElementById('sucCotizDolar').value) || 0;
+  const email = document.getElementById('sucEmail').value.trim();
+  const celular = document.getElementById('sucCelular').value.trim();
+
+  if (!nombre) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
+
+  const payload = { nombre, cuit, puntoventa, cotizaciondolar, email, celular };
+
+  try {
+    if (guid) {
+      await API.UpdateSucursal(guid, payload);
+      ShowToast('Sucursal', 'Actualizada exitosamente', 'success');
+    } else {
+      await API.CreateSucursal(payload);
+      ShowToast('Sucursal', 'Creada exitosamente', 'success');
+    }
+    document.getElementById('formSucursalContainer').innerHTML = '';
+    // Refrescar State.sucursales para que el dropdown del navbar se actualice
+    State.sucursales = await API.GetSucursales();
+    BuscarSucursales();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+async function EliminarSucursal(guid, nombre) {
+  if (!confirm(`Eliminar la sucursal "${nombre}"?`)) return;
+  try {
+    await API.DeleteSucursal(guid);
+    ShowToast('Sucursal', 'Eliminada exitosamente', 'success');
+    State.sucursales = await API.GetSucursales();
+    BuscarSucursales();
   } catch (err) { ShowToast('Error', err.message, 'error'); }
 }
 
