@@ -21,6 +21,10 @@ const API = (function () {
   async function GetUsuarios() {
     return Request('/usuarios');
   }
+  async function GetUsuarioByGuid(guid) { return Request(`/usuarios/${guid}`); }
+  async function CreateUsuario(data) { return Request('/usuarios/crear', { method: 'POST', body: JSON.stringify(data) }); }
+  async function UpdateUsuario(guid, data) { return Request(`/usuarios/${guid}`, { method: 'PUT', body: JSON.stringify(data) }); }
+  async function DeleteUsuario(guid) { return Request(`/usuarios/${guid}`, { method: 'DELETE' }); }
 
   // Artículos
   async function GetArticulos(search) {
@@ -324,7 +328,7 @@ const API = (function () {
   }
 
   return {
-    Login, GetUsuarios,
+    Login, GetUsuarios, GetUsuarioByGuid, CreateUsuario, UpdateUsuario, DeleteUsuario,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
     GetClientes, CreateCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
     GetSucursales, GetVendedores,

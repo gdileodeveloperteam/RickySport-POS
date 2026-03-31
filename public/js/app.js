@@ -238,6 +238,10 @@ async function InitApp() {
 
     document.getElementById('navUsuarioNombre').textContent = (State.usuario.NOMBRE || '').trim();
 
+    // Mostrar menu Usuarios solo para admin (CODIGOUSUARIO=1, ID=AJE)
+    const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
+    document.getElementById('navUsuarios').classList.toggle('d-none', !esAdmin);
+
     App.Navigate('pos');
   } catch (err) {
     ShowToast('Error', 'No se pudo conectar con el servidor: ' + err.message, 'error');
@@ -321,6 +325,7 @@ const App = {
       case 'clientes': RenderClientes(main); break;
       case 'empleados': RenderEmpleados(main); break;
       case 'bancos': RenderBancos(main); break;
+      case 'usuarios': RenderUsuarios(main); break;
     }
   },
 };
@@ -6623,5 +6628,163 @@ async function EliminarTipoCobroPago(guid) {
     await API.DeleteTipoCobroPago(guid);
     ShowToast('Tipo Cobro/Pago', 'Eliminado', 'success');
     LoadTiposCobrosPagos();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+// ============================================================================
+// SECCIÓN: Usuarios — CRUD (solo admin)
+// ============================================================================
+
+function RenderUsuarios(container) {
+  // Verificar acceso admin
+  const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
+  if (!esAdmin) {
+    container.innerHTML = '<div class="alert alert-danger">No tiene permisos para acceder a esta secci&oacute;n.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <h4 class="mb-3"><i class="bi bi-shield-lock me-2"></i>Usuarios</h4>
+    <div class="card shadow-sm mb-3">
+      <div class="card-body d-flex gap-2 align-items-center">
+        <input type="text" id="usuarioSearch" class="form-control" placeholder="Buscar por nombre o ID..." onkeyup="BuscarUsuarios()">
+        <button class="btn btn-success" onclick="MostrarFormUsuario()"><i class="bi bi-plus-circle me-1"></i>Nuevo</button>
+      </div>
+    </div>
+    <div id="formUsuarioContainer"></div>
+    <div id="usuariosResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
+  `;
+  BuscarUsuarios();
+}
+
+async function BuscarUsuarios() {
+  const search = (document.getElementById('usuarioSearch')?.value || '').trim().toUpperCase();
+  const div = document.getElementById('usuariosResultados');
+  try {
+    const usuarios = await API.GetUsuarios();
+    let filtered = usuarios;
+    if (search) {
+      filtered = usuarios.filter(u =>
+        (u.NOMBRE || '').toUpperCase().includes(search) ||
+        (u.ID || '').toUpperCase().includes(search)
+      );
+    }
+    if (filtered.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron usuarios.</div>'; return; }
+    div.innerHTML = `
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead class="table-light">
+            <tr><th>C&oacute;digo</th><th>ID</th><th>Nombre</th><th>Nivel</th><th>Sucursal</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${filtered.map(u => {
+              const nombre = (u.NOMBRE || '').trim();
+              const sucNombre = State.sucursales.find(s => s.GUID === (u.GUIDSUCURSALES || '').trim());
+              return `<tr>
+                <td>${u.CODIGOUSUARIO}</td>
+                <td class="fw-semibold">${(u.ID || '').trim()}</td>
+                <td>${nombre}</td>
+                <td>${u.NIVEL || 0}</td>
+                <td>${sucNombre ? (sucNombre.NOMBRE || '').trim() : '-'}</td>
+                <td class="text-end">
+                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarUsuario('${u.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarUsuario('${u.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-trash"></i></button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
+}
+
+function MostrarFormUsuario(usuario) {
+  const esEdicion = !!usuario;
+  const container = document.getElementById('formUsuarioContainer');
+  const sucOpts = State.sucursales.map(s => {
+    const sel = usuario && (usuario.GUIDSUCURSALES || '').trim() === s.GUID.trim() ? 'selected' : '';
+    return `<option value="${s.GUID.trim()}" ${sel}>${(s.NOMBRE || '').trim()}</option>`;
+  }).join('');
+  container.innerHTML = `
+    <div class="card border-primary mb-3">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3"><i class="bi bi-${esEdicion ? 'pencil' : 'person-plus'} me-1"></i>${esEdicion ? 'Editar' : 'Nuevo'} Usuario</h6>
+        <input type="hidden" id="usrGuid" value="${esEdicion ? usuario.GUID.trim() : ''}">
+        <div class="row g-2">
+          <div class="col-md-2">
+            <label class="form-label">ID (3 letras) <span class="text-danger">*</span></label>
+            <input type="text" class="form-control text-uppercase" id="usrId" maxlength="3" value="${esEdicion ? (usuario.ID || '').trim() : ''}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Nombre <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="usrNombre" maxlength="40" value="${esEdicion ? (usuario.NOMBRE || '').trim() : ''}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Clave</label>
+            <input type="text" class="form-control" id="usrClave" maxlength="20" value="${esEdicion ? (usuario.CLAVE || '').trim() : ''}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Nivel</label>
+            <input type="number" class="form-control" id="usrNivel" min="0" max="99" value="${esEdicion ? (usuario.NIVEL || 0) : 0}">
+          </div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-md-4">
+            <label class="form-label">Sucursal</label>
+            <select class="form-select" id="usrSucursal">
+              <option value="">-- Sin asignar --</option>
+              ${sucOpts}
+            </select>
+          </div>
+          <div class="col-md-8 d-flex align-items-end gap-2">
+            <button class="btn btn-primary" onclick="GuardarUsuario()"><i class="bi bi-check-circle me-1"></i>${esEdicion ? 'Actualizar' : 'Guardar'}</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('formUsuarioContainer').innerHTML=''">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function EditarUsuario(guid) {
+  try {
+    const usuario = await API.GetUsuarioByGuid(guid);
+    if (!usuario) { ShowToast('Error', 'Usuario no encontrado', 'error'); return; }
+    MostrarFormUsuario(usuario);
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+async function GuardarUsuario() {
+  const guid = document.getElementById('usrGuid').value;
+  const id = document.getElementById('usrId').value.trim().toUpperCase();
+  const nombre = document.getElementById('usrNombre').value.trim();
+  const clave = document.getElementById('usrClave').value.trim();
+  const nivel = parseInt(document.getElementById('usrNivel').value) || 0;
+  const guidsucursales = document.getElementById('usrSucursal').value;
+
+  if (!id || id.length > 3) { ShowToast('Error', 'El ID es obligatorio (max 3 caracteres)', 'error'); return; }
+  if (!nombre) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
+
+  const payload = { id, nombre, clave, nivel, guidsucursales };
+
+  try {
+    if (guid) {
+      await API.UpdateUsuario(guid, payload);
+      ShowToast('Usuario', 'Actualizado exitosamente', 'success');
+    } else {
+      await API.CreateUsuario(payload);
+      ShowToast('Usuario', 'Creado exitosamente', 'success');
+    }
+    document.getElementById('formUsuarioContainer').innerHTML = '';
+    BuscarUsuarios();
+  } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+async function EliminarUsuario(guid, nombre) {
+  if (!confirm(`Eliminar el usuario "${nombre}"?`)) return;
+  try {
+    await API.DeleteUsuario(guid);
+    ShowToast('Usuario', 'Eliminado exitosamente', 'success');
+    BuscarUsuarios();
   } catch (err) { ShowToast('Error', err.message, 'error'); }
 }

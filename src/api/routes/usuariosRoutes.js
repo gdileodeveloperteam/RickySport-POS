@@ -23,4 +23,24 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get('/:guid', async (req, res, next) => {
+  try {
+    const usuario = await repo.GetByGuid(req.params.guid);
+    if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json(usuario);
+  } catch (err) { next(err); }
+});
+
+router.post('/crear', async (req, res, next) => {
+  try { res.status(201).json(await repo.Create(req.body)); } catch (err) { next(err); }
+});
+
+router.put('/:guid', async (req, res, next) => {
+  try { res.json(await repo.Update(req.params.guid, req.body)); } catch (err) { next(err); }
+});
+
+router.delete('/:guid', async (req, res, next) => {
+  try { res.json(await repo.Delete(req.params.guid)); } catch (err) { next(err); }
+});
+
 module.exports = router;
