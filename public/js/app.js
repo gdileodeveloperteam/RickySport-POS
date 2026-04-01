@@ -216,25 +216,17 @@ async function InitApp() {
     State.tiposCobrosPagos = tiposCobrosPagos;
     State.bancosCuentas = bancosCuentas;
 
-    const sel = document.getElementById('selectSucursal');
-    sel.innerHTML = '';
-    sucursales.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.GUID;
-      opt.textContent = (s.NOMBRE || '').trim();
-      sel.appendChild(opt);
-    });
-
-    // Pre-seleccionar sucursal del usuario si tiene asignada
+    // Mostrar sucursal asignada al usuario como etiqueta (no editable)
     const guidSucUsuario = (State.usuario.GUIDSUCURSALES || '').trim();
     const sucUsuario = sucursales.find(s => s.GUID.trim() === guidSucUsuario);
+    const labelSuc = document.getElementById('labelSucursal');
     if (sucUsuario) {
-      sel.value = sucUsuario.GUID;
       State.sucursalActual = sucUsuario.GUID;
+      labelSuc.textContent = (sucUsuario.NOMBRE || '').trim();
     } else if (sucursales.length > 0) {
       State.sucursalActual = sucursales[0].GUID;
+      labelSuc.textContent = (sucursales[0].NOMBRE || '').trim();
     }
-    sel.addEventListener('change', () => { State.sucursalActual = sel.value; });
 
     document.getElementById('navUsuarioNombre').textContent = (State.usuario.NOMBRE || '').trim();
 
@@ -5385,6 +5377,8 @@ async function CargarComprobantesCliente(guid) {
 // ============================================================================
 // SECCIÓN: EMPLEADOS — Browse + Adelantos
 // ============================================================================
+let _empleadosSearchTimer = null;
+
 function RenderEmpleados(container) {
   const hoy = TodayISO();
   container.innerHTML = `
@@ -5393,7 +5387,7 @@ function RenderEmpleados(container) {
       <div class="card-body">
         <div class="row g-2 align-items-end">
           <div class="col-md-4">
-            <input type="text" id="empleadoSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIL...">
+            <input type="text" id="empleadoSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIL..." oninput="OnEmpleadoSearchInput()">
           </div>
           <div class="col-md-2">
             <label class="form-label mb-0">Desde</label>
@@ -5414,8 +5408,13 @@ function RenderEmpleados(container) {
   BuscarEmpleados();
 }
 
+function OnEmpleadoSearchInput() {
+  clearTimeout(_empleadosSearchTimer);
+  _empleadosSearchTimer = setTimeout(() => { BuscarEmpleados(); }, 300);
+}
+
 async function BuscarEmpleados() {
-  const search = (document.getElementById('empleadoSearch')?.value || '').trim();
+  const search = (document.getElementById('empleadoSearch')?.value || '').trim().toUpperCase();
   const desde = document.getElementById('empDesde')?.value || '';
   const hasta = document.getElementById('empHasta')?.value || '';
   const div = document.getElementById('empleadosResultados');
@@ -5427,12 +5426,12 @@ async function BuscarEmpleados() {
   const q = new URLSearchParams(params).toString();
 
   try {
-    const empleados = await API.GetEmpleados(undefined);
-    // Si hay fechas, hacer la query con adelantos
-    let empConAdv = empleados;
+    let empConAdv;
     if (desde || hasta) {
       const resp = await fetch(`/api/empleados?${q}`);
       empConAdv = await resp.json();
+    } else {
+      empConAdv = await API.GetEmpleados(search || undefined);
     }
 
     if (empConAdv.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron empleados.</div>'; return; }
