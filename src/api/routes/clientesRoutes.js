@@ -6,7 +6,8 @@ router.get('/', async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = Math.min(parseInt(req.query.limit) || 30, 200);
-    const data = await clientesRepo.GetAll(req.query.search, page, limit);
+    const inactivos = req.query.inactivos === '1';
+    const data = await clientesRepo.GetAll(req.query.search, page, limit, inactivos);
     res.json(data);
   } catch (err) { next(err); }
 });
@@ -50,6 +51,27 @@ router.get('/ctacte/:guid/validar', async (req, res, next) => {
     const importe = parseFloat(req.query.importe) || 0;
     const data = await clientesRepo.ValidarCreditoCtaCte(req.params.guid, importe);
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+router.put('/:guid', async (req, res, next) => {
+  try {
+    await clientesRepo.UpdateCliente(req.params.guid, req.body);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+router.delete('/:guid', async (req, res, next) => {
+  try {
+    await clientesRepo.DisableCliente(req.params.guid);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+router.post('/:guid/reactivar', async (req, res, next) => {
+  try {
+    await clientesRepo.EnableCliente(req.params.guid);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

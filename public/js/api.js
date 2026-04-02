@@ -45,11 +45,12 @@ const API = (function () {
   }
 
   // Clientes
-  async function GetClientes(search, page, limit) {
+  async function GetClientes(search, page, limit, inactivos) {
     const q = new URLSearchParams();
     if (search) q.set('search', search);
     if (page) q.set('page', page);
     if (limit) q.set('limit', limit);
+    if (inactivos) q.set('inactivos', '1');
     return Request(`/clientes?${q.toString()}`);
   }
 
@@ -59,6 +60,18 @@ const API = (function () {
 
   async function GetClienteByGuid(guid) {
     return Request(`/clientes/${guid}`);
+  }
+
+  async function UpdateCliente(guid, data) {
+    return Request(`/clientes/${guid}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async function DisableCliente(guid) {
+    return Request(`/clientes/${guid}`, { method: 'DELETE' });
+  }
+
+  async function ReactivarCliente(guid) {
+    return Request(`/clientes/${guid}/reactivar`, { method: 'POST' });
   }
 
   async function UpdateClienteContacto(guid, data) {
@@ -335,10 +348,15 @@ const API = (function () {
     return Request(`/caja-diaria/resumen${q ? '?' + q : ''}`);
   }
 
+  // ARCA
+  async function AutorizarARCA(guidFactura) {
+    return Request('/arca/autorizar', { method: 'POST', body: JSON.stringify({ guidFactura }) });
+  }
+
   return {
     Login, GetUsuarios, GetUsuarioByGuid, CreateUsuario, UpdateUsuario, DeleteUsuario,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
-    GetClientes, CreateCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
+    GetClientes, CreateCliente, UpdateCliente, DisableCliente, ReactivarCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
     GetSucursales, GetSucursalByGuid, GetConfiguraciones, CreateSucursal, UpdateSucursal, DeleteSucursal, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
     GetTCPagosPlanes, CreateTCPagoPlan, UpdateTCPagoPlan, DeleteTCPagoPlan,
@@ -355,5 +373,6 @@ const API = (function () {
     GetConceptosPorBanco, GetConceptoPorBancoByGuid, CreateConceptoPorBanco, UpdateConceptoPorBanco, DeleteConceptoPorBanco,
     GetTiposCobrosPagos, GetTipoCobroPagoByGuid, CreateTipoCobroPago, UpdateTipoCobroPago, DeleteTipoCobroPago,
     GetCajaDiaria, GetCajaDiariaResumen,
+    AutorizarARCA,
   };
 })();

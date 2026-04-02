@@ -2081,6 +2081,204 @@ async function GuardarNuevoCliente() {
 }
 
 // ============================================================================
+// SECCIÓN: Editar / Deshabilitar Cliente
+// ============================================================================
+
+async function EditarCliente(guid) {
+  try {
+    const c = await API.GetClienteByGuid(guid);
+    if (!c) { ShowToast('Error', 'Cliente no encontrado', 'danger'); return; }
+
+    const nombre = (c.NOMBRE || '').trim();
+    const documento = (c.DOCUMENTO || '').trim();
+    const cuit = (c.CUIT || '').trim();
+    const direccion = (c.DIRECCION || '').trim();
+    const email = (c.EMAIL || '').trim();
+    const celular = (c.CELULAR || '').trim();
+    const tipoIva = (c.TIPO_IVA || 'CONSUMIDOR FINAL').trim();
+    const limiteCredito = c.LIMITE_CREDITO != null ? c.LIMITE_CREDITO : '';
+    const provincia = (c.PROVINCIA || '').trim();
+    const localidad = (c.LOCALIDAD || '').trim();
+    const codigoPostal = (c.CODIGO_POSTAL || '').trim();
+    const observaciones = (c.OBSERVACIONES || '').trim();
+    const nombreEmpresa = (c.NOMBRE_EMPRESA || '').trim();
+    const clienteInactivo = c.dts != null && c.dts !== 0;
+    const tagInactivoModal = clienteInactivo ? '<span class="badge ms-2" style="background-color:#f8d7da;color:#842029;font-size:0.85rem">INACTIVO</span>' : '';
+
+    const modalHTML = `
+      <div class="modal fade" id="modalEditarCliente" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+              <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Editar Cliente${tagInactivoModal}</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <input type="hidden" id="ecGuid" value="${guid}">
+              <div class="row g-2">
+                <div class="col-md-4">
+                  <label class="form-label">Tipo IVA <span class="text-danger">*</span></label>
+                  <select class="form-select" id="ecTipoIva" onchange="OnEcTipoIvaChange()">
+                    <option value="CONSUMIDOR FINAL" ${tipoIva === 'CONSUMIDOR FINAL' ? 'selected' : ''}>CONSUMIDOR FINAL</option>
+                    <option value="RESPONSABLE INSCRIPTO" ${tipoIva === 'RESPONSABLE INSCRIPTO' ? 'selected' : ''}>RESPONSABLE INSCRIPTO</option>
+                    <option value="MONOTRIBUTO" ${tipoIva === 'MONOTRIBUTO' ? 'selected' : ''}>MONOTRIBUTO</option>
+                    <option value="EXENTO" ${tipoIva === 'EXENTO' ? 'selected' : ''}>EXENTO</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Documento <span class="text-danger" id="ecDocLabel">*</span></label>
+                  <input type="text" class="form-control" id="ecDocumento" value="${documento}" maxlength="12">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">CUIT <span class="text-danger d-none" id="ecCuitReq">*</span></label>
+                  <input type="text" class="form-control" id="ecCuit" value="${cuit}" maxlength="13">
+                </div>
+              </div>
+              <div class="row g-2 mt-1">
+                <div class="col-md-4">
+                  <label class="form-label">Nombre <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control text-uppercase" id="ecNombre" value="${nombre}" maxlength="255" style="text-transform:uppercase">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Direcci&oacute;n</label>
+                  <input type="text" class="form-control text-uppercase" id="ecDireccion" value="${direccion}" maxlength="255" style="text-transform:uppercase">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Email <span class="text-danger">*</span></label>
+                  <input type="email" class="form-control" id="ecEmail" value="${email}" maxlength="255">
+                </div>
+              </div>
+              <div class="row g-2 mt-1">
+                <div class="col-md-4">
+                  <label class="form-label">Celular <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="ecCelular" value="${celular}" maxlength="20">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Nombre Empresa</label>
+                  <input type="text" class="form-control text-uppercase" id="ecNombreEmpresa" value="${nombreEmpresa}" maxlength="100" style="text-transform:uppercase">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">L&iacute;mite de Cr&eacute;dito</label>
+                  <input type="number" class="form-control" id="ecLimiteCredito" value="${limiteCredito}" step="0.01">
+                </div>
+              </div>
+              <div class="row g-2 mt-1">
+                <div class="col-md-3">
+                  <label class="form-label">Provincia</label>
+                  <input type="text" class="form-control text-uppercase" id="ecProvincia" value="${provincia}" maxlength="255" style="text-transform:uppercase">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">Localidad</label>
+                  <input type="text" class="form-control text-uppercase" id="ecLocalidad" value="${localidad}" maxlength="255" style="text-transform:uppercase">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label">C&oacute;d. Postal</label>
+                  <input type="text" class="form-control text-uppercase" id="ecCodigoPostal" value="${codigoPostal}" maxlength="6" style="text-transform:uppercase">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Observaciones</label>
+                  <input type="text" class="form-control text-uppercase" id="ecObservaciones" value="${observaciones}" maxlength="5000" style="text-transform:uppercase">
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button class="btn btn-warning" onclick="GuardarEdicionCliente()"><i class="bi bi-check-circle me-1"></i>Guardar Cambios</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Remover modal anterior si existe
+    document.getElementById('modalEditarCliente')?.remove();
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    new bootstrap.Modal(document.getElementById('modalEditarCliente')).show();
+    OnEcTipoIvaChange();
+  } catch (err) {
+    ShowToast('Error', err.message, 'danger');
+  }
+}
+
+function OnEcTipoIvaChange() {
+  const tipoIva = document.getElementById('ecTipoIva').value;
+  const esCF = tipoIva === 'CONSUMIDOR FINAL';
+  document.getElementById('ecCuitReq').classList.toggle('d-none', esCF);
+  document.getElementById('ecDocLabel').textContent = esCF ? '*' : '';
+}
+
+async function GuardarEdicionCliente() {
+  const guid = document.getElementById('ecGuid').value;
+  const tipoIva = document.getElementById('ecTipoIva').value;
+  const documento = document.getElementById('ecDocumento').value.trim();
+  const cuit = document.getElementById('ecCuit').value.trim();
+  const nombre = document.getElementById('ecNombre').value.trim().toUpperCase();
+  const direccion = document.getElementById('ecDireccion').value.trim().toUpperCase();
+  const email = document.getElementById('ecEmail').value.trim();
+  const celular = document.getElementById('ecCelular').value.trim();
+  const limiteCredito = document.getElementById('ecLimiteCredito').value;
+  const provincia = document.getElementById('ecProvincia').value.trim().toUpperCase();
+  const localidad = document.getElementById('ecLocalidad').value.trim().toUpperCase();
+  const codigoPostal = document.getElementById('ecCodigoPostal').value.trim().toUpperCase();
+  const observaciones = document.getElementById('ecObservaciones').value.trim().toUpperCase();
+  const nombreEmpresa = document.getElementById('ecNombreEmpresa').value.trim().toUpperCase();
+
+  const esCF = tipoIva === 'CONSUMIDOR FINAL';
+
+  if (!nombre) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
+  if (!documento && !cuit) { ShowToast('Error', 'Debe ingresar Documento o CUIT', 'error'); return; }
+  if (documento && !ValidarDocumento(documento)) { ShowToast('Error', 'Documento inv\u00e1lido. Debe ser mayor a 1.000.000', 'error'); return; }
+  if (!esCF && !cuit) { ShowToast('Error', 'El CUIT es obligatorio para ' + tipoIva, 'error'); return; }
+  if (cuit && !ValidarCuit(cuit)) { ShowToast('Error', 'CUIT inv\u00e1lido. Formato: 99-99999999-9', 'error'); return; }
+  if (!email) { ShowToast('Error', 'El email es obligatorio', 'error'); return; }
+  if (!ValidarEmail(email)) { ShowToast('Error', 'Email inv\u00e1lido', 'error'); return; }
+  if (!celular) { ShowToast('Error', 'El celular es obligatorio', 'error'); return; }
+  if (!ValidarCelular(celular)) { ShowToast('Error', 'Celular inv\u00e1lido. M\u00ednimo 10 d\u00edgitos num\u00e9ricos', 'error'); return; }
+
+  const tipoFactura = tipoIva === 'RESPONSABLE INSCRIPTO' ? 'A' : 'B';
+  const codigoDocumentoAfip = esCF ? 96 : 80;
+
+  try {
+    await API.UpdateCliente(guid, {
+      nombre, documento: documento.replace(/\./g, ''), cuit, direccion, email, celular,
+      tipoIva, tipoFactura, codigoDocumentoAfip,
+      limiteCredito: limiteCredito !== '' ? parseFloat(limiteCredito) : null,
+      provincia, localidad, codigoPostal, observaciones, nombreEmpresa
+    });
+
+    ShowToast('Cliente', 'Actualizado exitosamente', 'success');
+    bootstrap.Modal.getInstance(document.getElementById('modalEditarCliente'))?.hide();
+    BuscarClientes();
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
+}
+
+async function DesactivarCliente(guid, nombre) {
+  if (!confirm(`\u00bfDesactivar al cliente "${nombre}"?`)) return;
+
+  try {
+    await API.DisableCliente(guid);
+    ShowToast('Cliente', 'Desactivado exitosamente', 'success');
+    BuscarClientes();
+  } catch (err) {
+    ShowToast('Error', err.message, 'danger');
+  }
+}
+
+async function ReactivarCliente(guid, nombre) {
+  if (!confirm(`\u00bfReactivar al cliente "${nombre}"?`)) return;
+
+  try {
+    await API.ReactivarCliente(guid);
+    ShowToast('Cliente', 'Reactivado exitosamente', 'success');
+    BuscarClientes();
+  } catch (err) {
+    ShowToast('Error', err.message, 'danger');
+  }
+}
+
+// ============================================================================
 // SECCIÓN: Factura — Modal de comprobante emitido
 // ============================================================================
 let _facturaActual = null;
@@ -2133,9 +2331,15 @@ async function MostrarFactura(guidFactura) {
     `).join('');
 
     // Estado AFIP
-    const estadoAfip = cae
-      ? `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>CAE: ${cae} (Vto: ${fechaCae})</span>`
-      : '<span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pendiente de autorizar</span>';
+    const codCompAfip = f.Codigo_ComprobanteAfip || 0;
+    let estadoAfip;
+    if (cae) {
+      estadoAfip = `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>CAE: ${cae} (Vto: ${fechaCae})</span>`;
+    } else if (codCompAfip > 0) {
+      estadoAfip = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Enviada a ARCA</span>';
+    } else {
+      estadoAfip = '<span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Pendiente de autorizar</span>';
+    }
 
     body.innerHTML = `
       <!-- Cabecera comprobante -->
@@ -2206,13 +2410,54 @@ async function MostrarFactura(guidFactura) {
         </div>
       </div>
     `;
+
+    // Actualizar botón Autorizar ARCA según estado
+    const btnArca = document.getElementById('btnAutorizarFactura');
+    if (cae || codCompAfip > 0) {
+      btnArca.disabled = true;
+      btnArca.classList.remove('btn-outline-success');
+      btnArca.classList.add('btn-success');
+      btnArca.innerHTML = '<i class="bi bi-check-circle me-1"></i>Enviada';
+    } else {
+      btnArca.disabled = false;
+      btnArca.classList.remove('btn-success');
+      btnArca.classList.add('btn-outline-success');
+      btnArca.innerHTML = '<i class="bi bi-shield-check me-1"></i>Autorizar ARCA';
+    }
   } catch (err) {
     body.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
   }
 }
 
-function AutorizarFactura() {
-  ShowToast('Autorizar ARCA', 'Funcionalidad pendiente de implementar', 'info');
+async function AutorizarFactura() {
+  if (!_facturaActual || !_facturaActual.factura) {
+    ShowToast('Error', 'No hay factura cargada', 'danger');
+    return;
+  }
+
+  const guidFactura = (_facturaActual.factura.GUID || '').trim();
+  if (!guidFactura) {
+    ShowToast('Error', 'GUID de factura no disponible', 'danger');
+    return;
+  }
+
+  const btn = document.getElementById('btnAutorizarFactura');
+  const originalHTML = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Autorizando...';
+
+  try {
+    const result = await API.AutorizarARCA(guidFactura);
+    ShowToast('ARCA', 'Factura enviada correctamente', 'success');
+    btn.disabled = true;
+    btn.classList.remove('btn-outline-success');
+    btn.classList.add('btn-success');
+    btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Enviada';
+  } catch (err) {
+    ShowToast('Error ARCA', err.message, 'danger');
+    btn.disabled = false;
+    btn.innerHTML = originalHTML;
+  }
 }
 
 function EnviarFacturaWhatsApp() {
@@ -4961,12 +5206,28 @@ async function ToggleDetalleCompra(guid, rowId) {
 // SECCIÓN: CLIENTES — Browse + Movimientos + Comprobantes
 // ============================================================================
 let _clientesPage = 1;
+let _clientesInactivosPage = 1;
 let _clientesSearchTimer = null;
+let _clientesTabActual = 'activos';
 
 function RenderClientes(container) {
   _clientesPage = 1;
+  _clientesInactivosPage = 1;
+  _clientesTabActual = 'activos';
   container.innerHTML = `
     <h4 class="mb-3"><i class="bi bi-people me-2"></i>Clientes</h4>
+    <ul class="nav nav-tabs mb-3" id="clientesTabs">
+      <li class="nav-item">
+        <a class="nav-link active" href="#" id="tabClientesActivos" onclick="CambiarTabClientes('activos');return false">
+          <i class="bi bi-people me-1"></i>Activos
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="#" id="tabClientesInactivos" onclick="CambiarTabClientes('inactivos');return false">
+          <i class="bi bi-person-x me-1"></i>Inactivos
+        </a>
+      </li>
+    </ul>
     <div class="card shadow-sm mb-3">
       <div class="card-body">
         <input type="text" id="clienteSearch" class="form-control" placeholder="Buscar por nombre, documento o CUIT..." oninput="OnClienteSearchInput()">
@@ -4977,20 +5238,43 @@ function RenderClientes(container) {
   BuscarClientes();
 }
 
+function CambiarTabClientes(tab) {
+  _clientesTabActual = tab;
+  _clientesPage = 1;
+  _clientesInactivosPage = 1;
+  document.getElementById('tabClientesActivos').classList.toggle('active', tab === 'activos');
+  document.getElementById('tabClientesInactivos').classList.toggle('active', tab === 'inactivos');
+  BuscarClientes();
+}
+
 function OnClienteSearchInput() {
   clearTimeout(_clientesSearchTimer);
-  _clientesSearchTimer = setTimeout(() => { _clientesPage = 1; BuscarClientes(); }, 300);
+  _clientesSearchTimer = setTimeout(() => {
+    _clientesPage = 1;
+    _clientesInactivosPage = 1;
+    BuscarClientes();
+  }, 300);
 }
 
 async function BuscarClientes(page) {
-  if (page) _clientesPage = page;
+  const esInactivos = _clientesTabActual === 'inactivos';
+  if (page) {
+    if (esInactivos) _clientesInactivosPage = page;
+    else _clientesPage = page;
+  }
+  const currentPage = esInactivos ? _clientesInactivosPage : _clientesPage;
   const search = (document.getElementById('clienteSearch')?.value || '').trim();
   const div = document.getElementById('clientesResultados');
+  const nivelUsuario = (State.usuario && State.usuario.NIVEL) || 0;
+
   try {
-    const resp = await API.GetClientes(search || undefined, _clientesPage, 30);
+    const resp = await API.GetClientes(search || undefined, currentPage, 30, esInactivos);
     const clientes = resp.data;
     const pag = resp.pagination;
-    if (clientes.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron clientes.</div>'; return; }
+    if (clientes.length === 0) {
+      div.innerHTML = `<div class="alert alert-info">No se encontraron clientes ${esInactivos ? 'inactivos' : ''}.</div>`;
+      return;
+    }
 
     const paginacion = pag.totalPages > 1 ? `
       <div class="d-flex justify-content-between align-items-center mt-2">
@@ -5011,7 +5295,7 @@ async function BuscarClientes(page) {
       <div class="table-responsive">
         <table class="table table-sm table-hover">
           <thead class="table-light">
-            <tr><th>Nombre</th><th>CUIT</th><th>Documento</th><th>Celular</th><th>Email</th><th class="text-end">L&iacute;mite Cr&eacute;dito</th><th class="text-end">Saldo</th><th></th></tr>
+            <tr><th>Nombre</th><th>CUIT</th><th>Documento</th><th>Celular</th><th>Email</th><th class="text-end">L&iacute;mite Cr&eacute;dito</th><th class="text-end">Saldo</th><th class="text-center">Acciones</th></tr>
           </thead>
           <tbody>
             ${clientes.map(c => {
@@ -5019,18 +5303,30 @@ async function BuscarClientes(page) {
               const saldo = c.SALDO || 0;
               const limite = c.LIMITE_CREDITO;
               const limiteText = limite == null ? '-' : limite < 0 ? 'Ilimitado' : FormatMoney(limite);
-              return `<tr>
-                <td class="fw-semibold">${nombre}</td>
+              const inactivo = c.dts != null && c.dts !== 0;
+              let btnAccion = '';
+              if (inactivo && nivelUsuario > 9) {
+                btnAccion = `<button class="btn btn-sm btn-outline-success" title="Reactivar" onclick="ReactivarCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-person-check"></i></button>`;
+              } else if (!inactivo && nivelUsuario > 9) {
+                btnAccion = `<button class="btn btn-sm btn-outline-danger" title="Desactivar" onclick="DesactivarCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-person-x"></i></button>`;
+              }
+              const tagInactivo = inactivo ? ' <span class="badge" style="background-color:#f8d7da;color:#842029">INACTIVO</span>' : '';
+              return `<tr${inactivo ? ' class="table-light text-muted"' : ''}>
+                <td class="fw-semibold">${nombre}${tagInactivo}</td>
                 <td>${(c.CUIT || '').trim()}</td>
                 <td>${(c.DOCUMENTO || '').trim()}</td>
                 <td>${(c.CELULAR || '').trim()}</td>
                 <td>${(c.EMAIL || '').trim()}</td>
                 <td class="text-end">${limiteText}</td>
                 <td class="text-end ${saldo > 0 ? 'text-danger' : saldo < 0 ? 'text-success' : ''}">${FormatMoney(saldo)}</td>
-                <td>
-                  <button class="btn btn-sm btn-outline-primary" onclick="VerMovimientosCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')">
+                <td class="text-center text-nowrap">
+                  <button class="btn btn-sm btn-outline-primary me-1" title="Movimientos" onclick="VerMovimientosCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')">
                     <i class="bi bi-list-ul"></i>
                   </button>
+                  <button class="btn btn-sm btn-outline-warning me-1" title="Editar" onclick="EditarCliente('${c.GUID.trim()}')">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  ${btnAccion}
                 </td>
               </tr>`;
             }).join('')}
@@ -5355,7 +5651,8 @@ async function CargarComprobantesCliente(guid) {
           const cae = (f.CAE || '').trim();
           const tipoLabel = tipo === 'NCB' || tipo === 'NCA' ? 'NC' : tipo === 'NDB' || tipo === 'NDA' ? 'ND' : 'FC';
           const badgeColor = tipoLabel === 'NC' ? 'warning text-dark' : tipoLabel === 'ND' ? 'danger' : 'success';
-          const afipBadge = cae ? '<span class="badge bg-success">CAE</span>' : '<span class="badge bg-secondary">Pendiente</span>';
+          const codCompAfipList = f.Codigo_ComprobanteAfip || 0;
+          const afipBadge = cae ? '<span class="badge bg-success">CAE</span>' : codCompAfipList > 0 ? '<span class="badge bg-success">Enviada</span>' : '<span class="badge bg-secondary">Pendiente</span>';
           return `<tr>
             <td class="fw-semibold">${(f.NUMERO_FACTURA || '').trim()}</td>
             <td><span class="badge bg-${badgeColor}">${tipoLabel} ${(f.TIPO_FACTURA || '').trim()}</span></td>

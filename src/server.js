@@ -31,6 +31,7 @@ app.use('/api/compras', require('./api/routes/comprasRoutes'));
 app.use('/api/condicion-articulos', require('./api/routes/condicionArticulosRoutes'));
 app.use('/api/tipos-cobros-pagos', require('./api/routes/tiposCobrosPagosRoutes'));
 app.use('/api/caja-diaria', require('./api/routes/cajaDiariaRoutes'));
+app.use('/api/arca', require('./api/routes/arcaRoutes'));
 
 // SPA fallback
 app.get('{*path}', (req, res) => {

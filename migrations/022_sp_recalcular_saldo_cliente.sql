@@ -6,8 +6,8 @@ BEGIN
 
     -- Usamos un CTE para pre-calcular los saldos y hacer el UPDATE más limpio
     WITH SaldosCalculados AS (
-        SELECT 
-            GUIDCLIENTE, 
+        SELECT
+            GUIDCLIENTE,
             SUM(DEBE - HABER) AS NuevoSaldo
         FROM controlcomprobantes
         WHERE (@guid_cliente IS NULL OR GUIDCLIENTE = @guid_cliente) and TIPOMOVIMIENTO != 1

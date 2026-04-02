@@ -39,9 +39,11 @@ async function Create({ nombre, documento, cuit, direccion, email, celular, tipo
   return { guid, codigoCliente };
 }
 
-async function GetAll(search, page = 1, limit = 30) {
+async function GetAll(search, page = 1, limit = 30, inactivos = false) {
   const pool = await getPool();
-  let where = `WHERE (dts IS NULL OR dts = 0)`;
+  let where = inactivos
+    ? `WHERE (dts IS NOT NULL AND dts != 0)`
+    : `WHERE (dts IS NULL OR dts = 0)`;
   const request = pool.request();
   if (search) {
     where += ` AND (UPPER(NOMBRE) LIKE @search OR CUIT LIKE @search OR DOCUMENTO LIKE @search)`;
@@ -57,7 +59,7 @@ async function GetAll(search, page = 1, limit = 30) {
   const result = await request.query(`
     SELECT GUID, CODIGO_CLIENTE, NOMBRE, CUENTA, DIRECCION, CUIT, DOCUMENTO,
            EMAIL, TELEFONO, CELULAR, TIPO_IVA, TIPO_FACTURA, SALDO,
-           LIMITE_CREDITO, PERMITECREDITO, LOCALIDAD, PROVINCIA
+           LIMITE_CREDITO, PERMITECREDITO, LOCALIDAD, PROVINCIA, dts
     FROM Clientes
     ${where}
     ORDER BY NOMBRE
@@ -70,7 +72,7 @@ async function GetByGuid(guid) {
   const pool = await getPool();
   const result = await pool.request()
     .input('guid', sql.Char(16), guid)
-    .query(`SELECT * FROM Clientes WHERE GUID = @guid AND (dts IS NULL OR dts = 0)`);
+    .query(`SELECT * FROM Clientes WHERE GUID = @guid`);
   return result.recordset[0] || null;
 }
 
@@ -204,7 +206,7 @@ async function GetFacturas(guidCliente, desde, hasta) {
   const result = await request.query(`
     SELECT f.GUID, f.NUMERO_FACTURA, f.TIPO_COMPROBANTE, f.TIPO_FACTURA,
            f.FECHA, f.TOTAL, f.NOMBRE, f.CUIT, f.CAE, f.PENDIENTE,
-           f.GUIDREMITOS
+           f.GUIDREMITOS, f.Codigo_ComprobanteAfip
     FROM Facturas f
     WHERE ${where}
     ORDER BY f.FECHA DESC, f.ts DESC
@@ -555,6 +557,67 @@ async function CobroDeuda({ guidCliente, guidSucursal, guidUsuario, items, pagos
   }
 }
 
+async function UpdateCliente(guid, { nombre, documento, cuit, direccion, email, celular, tipoIva, tipoFactura, codigoDocumentoAfip, limiteCredito, provincia, localidad, codigoPostal, observaciones, nombreEmpresa }) {
+  const pool = await getPool();
+  const ts = tsNow();
+  const upper = v => (v || '').toUpperCase();
+  await pool.request()
+    .input('guid', sql.Char(16), guid)
+    .input('nombre', sql.VarChar(255), upper(nombre))
+    .input('documento', sql.VarChar(20), documento || '')
+    .input('cuit', sql.VarChar(20), cuit || '')
+    .input('direccion', sql.VarChar(255), upper(direccion))
+    .input('email', sql.VarChar(255), email || '')
+    .input('celular', sql.VarChar(60), celular || '')
+    .input('tipoIva', sql.VarChar(40), tipoIva || 'CONSUMIDOR FINAL')
+    .input('tipoFactura', sql.Char(1), tipoFactura || 'B')
+    .input('codigoDocumentoAfip', sql.SmallInt, codigoDocumentoAfip || 96)
+    .input('limiteCredito', sql.Decimal(11, 2), limiteCredito != null ? limiteCredito : null)
+    .input('provincia', sql.VarChar(255), upper(provincia))
+    .input('localidad', sql.VarChar(255), upper(localidad))
+    .input('codigoPostal', sql.Char(6), upper(codigoPostal))
+    .input('observaciones', sql.VarChar(5000), upper(observaciones))
+    .input('nombreEmpresa', sql.Char(100), upper(nombreEmpresa))
+    .input('ts', sql.Float, ts)
+    .query(`
+      UPDATE Clientes SET
+        NOMBRE = @nombre, DOCUMENTO = @documento, CUIT = @cuit, DIRECCION = @direccion,
+        EMAIL = @email, CELULAR = @celular, TIPO_IVA = @tipoIva, TIPO_FACTURA = @tipoFactura,
+        CODIGO_DOCUMENTO_AFIP = @codigoDocumentoAfip, LIMITE_CREDITO = @limiteCredito,
+        PROVINCIA = @provincia, LOCALIDAD = @localidad, CODIGO_POSTAL = @codigoPostal,
+        OBSERVACIONES = @observaciones, NOMBRE_EMPRESA = @nombreEmpresa, ts = @ts
+      WHERE GUID = @guid
+    `);
+}
+
+async function DisableCliente(guid) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('guid', sql.Char(16), guid)
+    .query(`SELECT GUID FROM Clientes WHERE GUID = @guid`);
+  if (!result.recordset[0]) throw new Error('Cliente no encontrado');
+
+  // Calcular saldo real desde ControlComprobantes
+  const saldoResult = await pool.request()
+    .input('guid', sql.Char(16), guid)
+    .query(`SELECT ISNULL(SUM(DEBE - HABER), 0) AS SaldoReal FROM ControlComprobantes WHERE GUIDCLIENTE = @guid AND TIPOMOVIMIENTO != 1`);
+  const saldoReal = saldoResult.recordset[0].SaldoReal;
+  if (saldoReal !== 0) throw new Error('No es posible desactivar el cliente mientras tenga saldo en Cta. Cte.');
+
+  const ts = tsNow();
+  await pool.request()
+    .input('guid', sql.Char(16), guid)
+    .input('dts', sql.Float, ts)
+    .query(`UPDATE Clientes SET dts = @dts WHERE GUID = @guid`);
+}
+
+async function EnableCliente(guid) {
+  const pool = await getPool();
+  await pool.request()
+    .input('guid', sql.Char(16), guid)
+    .query(`UPDATE Clientes SET dts = NULL WHERE GUID = @guid`);
+}
+
 async function UpdateContacto(guid, { email, celular }) {
   const pool = await getPool();
   const ts = tsNow();
@@ -566,4 +629,4 @@ async function UpdateContacto(guid, { email, celular }) {
     .query(`UPDATE Clientes SET EMAIL = @email, CELULAR = @celular, ts = @ts WHERE GUID = @guid`);
 }
 
-module.exports = { Create, GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo, RecalcularSaldos, GetMovimientos, GetFacturas, GetDeudaActiva, CobroDeuda, UpdateContacto };
+module.exports = { Create, GetAll, GetByGuid, GetCtaCte, ValidarCreditoCtaCte, GetSaldo, UpdateSaldo, RecalcularSaldos, GetMovimientos, GetFacturas, GetDeudaActiva, CobroDeuda, UpdateContacto, UpdateCliente, DisableCliente, EnableCliente };
