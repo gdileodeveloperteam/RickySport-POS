@@ -217,6 +217,13 @@ async function InitApp() {
     State.tiposCobrosPagos = tiposCobrosPagos;
     State.bancosCuentas = bancosCuentas;
 
+    // Cargar version de la app
+    try {
+      const ver = await API.GetVersion();
+      const el = document.getElementById('appVersion');
+      if (el && ver.version) el.textContent = 'v' + ver.version;
+    } catch (_) {}
+
     // Cargar configuración de descuento máximo
     try {
       const cfg = await API.GetMaxDescuento();
@@ -7024,7 +7031,8 @@ function RenderCajaDiaria(container) {
 
 async function LoadUsuariosCajaDiaria() {
   try {
-    const usuarios = await API.GetUsuarios();
+    const resp = await API.GetUsuarios(undefined, 1, 200);
+    const usuarios = resp.data || resp;
     const sel = document.getElementById('cdUsuario');
     if (!sel) return;
     const currentVal = sel.value;
@@ -8339,6 +8347,8 @@ async function EliminarSucursal(guid, nombre) {
 // SECCIÓN: Usuarios — CRUD (solo admin)
 // ============================================================================
 
+let _usrPage = 1, _usrSortBy = 'NOMBRE', _usrSortDir = 'ASC', _usrSearchTimer = null;
+
 function RenderUsuarios(container) {
   // Verificar acceso admin
   const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
@@ -8346,41 +8356,85 @@ function RenderUsuarios(container) {
     container.innerHTML = '<div class="alert alert-danger">No tiene permisos para acceder a esta secci&oacute;n.</div>';
     return;
   }
+  _usrPage = 1;
   container.innerHTML = `
-    <h4 class="mb-3"><i class="bi bi-shield-lock me-2"></i>Usuarios</h4>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Usuarios</h4>
+      <button class="btn btn-primary" onclick="MostrarFormUsuario()"><i class="bi bi-plus-lg me-1"></i>Nuevo Usuario</button>
+    </div>
     <div class="card shadow-sm mb-3">
-      <div class="card-body d-flex gap-2 align-items-center">
-        <input type="text" id="usuarioSearch" class="form-control" placeholder="Buscar por nombre o ID..." onkeyup="BuscarUsuarios()">
-        <button class="btn btn-success" onclick="MostrarFormUsuario()"><i class="bi bi-plus-circle me-1"></i>Nuevo</button>
+      <div class="card-body py-2">
+        <input type="text" id="usuarioSearch" class="form-control" placeholder="Buscar por nombre o ID..." oninput="_usrSearchDebounce()">
       </div>
     </div>
     <div id="formUsuarioContainer"></div>
     <div id="usuariosResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
   `;
-  BuscarUsuarios();
+  CargarUsuarios();
 }
 
-async function BuscarUsuarios() {
-  const search = (document.getElementById('usuarioSearch')?.value || '').trim().toUpperCase();
+function _usrSearchDebounce() {
+  clearTimeout(_usrSearchTimer);
+  _usrSearchTimer = setTimeout(() => { _usrPage = 1; CargarUsuarios(); }, 300);
+}
+
+function _usrSort(col) {
+  if (_usrSortBy === col) _usrSortDir = _usrSortDir === 'ASC' ? 'DESC' : 'ASC';
+  else { _usrSortBy = col; _usrSortDir = 'ASC'; }
+  _usrPage = 1;
+  CargarUsuarios();
+}
+
+async function CargarUsuarios(page) {
+  if (page) _usrPage = page;
+  const search = (document.getElementById('usuarioSearch')?.value || '').trim();
   const div = document.getElementById('usuariosResultados');
+
   try {
-    const usuarios = await API.GetUsuarios();
-    let filtered = usuarios;
-    if (search) {
-      filtered = usuarios.filter(u =>
-        (u.NOMBRE || '').toUpperCase().includes(search) ||
-        (u.ID || '').toUpperCase().includes(search)
-      );
+    const pageSize = Math.max(10, Math.floor((window.innerHeight - 320) / 40));
+    const resp = await API.GetUsuarios(search || undefined, _usrPage, pageSize, _usrSortBy, _usrSortDir);
+    const usuarios = resp.data;
+    const pag = resp.pagination;
+
+    if (usuarios.length === 0) {
+      div.innerHTML = '<div class="alert alert-info">No se encontraron usuarios.</div>';
+      return;
     }
-    if (filtered.length === 0) { div.innerHTML = '<div class="alert alert-info">No se encontraron usuarios.</div>'; return; }
+
+    const paginacion = pag.totalPages > 1 ? `
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <small class="text-muted">Mostrando ${(pag.page-1)*pag.limit+1}-${Math.min(pag.page*pag.limit, pag.total)} de ${pag.total}</small>
+        <nav><ul class="pagination pagination-sm mb-0">
+          <li class="page-item ${pag.page<=1?'disabled':''}"><a class="page-link" href="#" onclick="CargarUsuarios(${pag.page-1});return false">&laquo;</a></li>
+          ${Array.from({length:pag.totalPages},(_,i)=>i+1).filter(p=>p===1||p===pag.totalPages||Math.abs(p-pag.page)<=2).map(p=>
+            `<li class="page-item ${p===pag.page?'active':''}"><a class="page-link" href="#" onclick="CargarUsuarios(${p});return false">${p}</a></li>`
+          ).join('')}
+          <li class="page-item ${pag.page>=pag.totalPages?'disabled':''}"><a class="page-link" href="#" onclick="CargarUsuarios(${pag.page+1});return false">&raquo;</a></li>
+        </ul></nav>
+      </div>` : '';
+
+    const thSort = (col, label) => {
+      const active = _usrSortBy === col;
+      const icon = active ? (_usrSortDir === 'ASC' ? 'bi-sort-up' : 'bi-sort-down') : 'bi-arrow-down-up opacity-25';
+      return `<th class="sortable" onclick="_usrSort('${col}')" style="cursor:pointer">${label} <i class="bi ${icon} ms-1"></i></th>`;
+    };
+
     div.innerHTML = `
       <div class="table-responsive">
-        <table class="table table-sm table-hover">
+        <table class="table table-sm table-hover no-sort-table">
           <thead class="table-light">
-            <tr><th>C&oacute;digo</th><th>ID</th><th>Nombre</th><th>Nivel</th><th>Sucursal</th><th></th></tr>
+            <tr>
+              ${thSort('CODIGOUSUARIO', 'C\u00f3digo')}
+              ${thSort('ID', 'ID')}
+              ${thSort('NOMBRE', 'Nombre')}
+              ${thSort('NIVEL', 'Nivel')}
+              <th>Sucursal</th>
+              <th class="text-center">Acciones</th>
+            </tr>
           </thead>
           <tbody>
-            ${filtered.map(u => {
+            ${usuarios.map(u => {
+              const guid = u.GUID.trim();
               const nombre = (u.NOMBRE || '').trim();
               const sucNombre = State.sucursales.find(s => s.GUID === (u.GUIDSUCURSALES || '').trim());
               return `<tr>
@@ -8389,15 +8443,16 @@ async function BuscarUsuarios() {
                 <td>${nombre}</td>
                 <td>${u.NIVEL || 0}</td>
                 <td>${sucNombre ? (sucNombre.NOMBRE || '').trim() : '-'}</td>
-                <td class="text-end">
-                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarUsuario('${u.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
-                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarUsuario('${u.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-trash"></i></button>
+                <td class="text-center">
+                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarUsuario('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarUsuario('${guid}', '${nombre.replace(/'/g, "\\'")}')" title="Eliminar"><i class="bi bi-trash"></i></button>
                 </td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
       </div>
+      ${paginacion}
     `;
   } catch (err) { div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
 }
@@ -8519,7 +8574,7 @@ async function GuardarUsuario() {
       ShowToast('Usuario', 'Creado exitosamente', 'success');
     }
     document.getElementById('formUsuarioContainer').innerHTML = '';
-    BuscarUsuarios();
+    CargarUsuarios();
   } catch (err) { ShowToast('Error', err.message, 'error'); }
 }
 
@@ -8528,7 +8583,7 @@ async function EliminarUsuario(guid, nombre) {
   try {
     await API.DeleteUsuario(guid);
     ShowToast('Usuario', 'Eliminado exitosamente', 'success');
-    BuscarUsuarios();
+    CargarUsuarios();
   } catch (err) { ShowToast('Error', err.message, 'error'); }
 }
 

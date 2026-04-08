@@ -3,12 +3,17 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
+const { version, name } = require('./version');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Version / Health
+app.get('/api/version', (req, res) => res.json({ version, name }));
 
 // API Routes
 app.use('/api/usuarios', require('./api/routes/usuariosRoutes'));

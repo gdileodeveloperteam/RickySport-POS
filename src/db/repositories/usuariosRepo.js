@@ -17,16 +17,41 @@ async function Login(id, clave) {
   return result.recordset[0] || null;
 }
 
-async function GetAll() {
+async function GetAll({ search, page = 1, limit = 30, sortBy, sortDir } = {}) {
   const pool = await getPool();
-  const result = await pool.request()
-    .query(`
-      SELECT GUID, CODIGOUSUARIO, ID, NOMBRE, NIVEL, GUIDSUCURSALES
-      FROM Usuarios
-      WHERE (dts IS NULL OR dts = 0)
-      ORDER BY NOMBRE
-    `);
-  return result.recordset;
+  limit = Math.min(limit, 200);
+  const offset = (page - 1) * limit;
+
+  const allowedSort = ['CODIGOUSUARIO', 'ID', 'NOMBRE', 'NIVEL'];
+  const col = allowedSort.includes(sortBy) ? sortBy : 'NOMBRE';
+  const dir = sortDir === 'DESC' ? 'DESC' : 'ASC';
+
+  let where = `(dts IS NULL OR dts = 0)`;
+  if (search) where += ` AND (RTRIM(LTRIM(NOMBRE)) LIKE @search OR RTRIM(LTRIM(ID)) LIKE @search)`;
+
+  const addInputs = (req) => {
+    if (search) req.input('search', sql.VarChar, `%${search.toUpperCase()}%`);
+    return req;
+  };
+
+  const countResult = await addInputs(pool.request()).query(`SELECT COUNT(*) AS total FROM Usuarios WHERE ${where}`);
+  const total = countResult.recordset[0].total;
+
+  const dataReq = addInputs(pool.request());
+  dataReq.input('offset', sql.Int, offset);
+  dataReq.input('limit', sql.Int, limit);
+  const dataResult = await dataReq.query(`
+    SELECT GUID, CODIGOUSUARIO, ID, NOMBRE, NIVEL, GUIDSUCURSALES
+    FROM Usuarios
+    WHERE ${where}
+    ORDER BY ${col} ${dir}
+    OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+  `);
+
+  return {
+    data: dataResult.recordset,
+    pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+  };
 }
 
 async function GetByGuid(guid) {
