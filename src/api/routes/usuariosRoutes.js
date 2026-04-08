@@ -18,8 +18,12 @@ router.post('/login', async (req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   try {
-    const usuarios = await repo.GetAll();
-    res.json(usuarios);
+    const { search, page, limit, sortBy, sortDir } = req.query;
+    const data = await repo.GetAll({
+      search, page: parseInt(page) || 1, limit: parseInt(limit) || 30,
+      sortBy, sortDir,
+    });
+    res.json(data);
   } catch (err) { next(err); }
 });
 

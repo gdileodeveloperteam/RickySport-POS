@@ -18,8 +18,15 @@ const API = (function () {
     return Request('/usuarios/login', { method: 'POST', body: JSON.stringify({ id, clave }) });
   }
 
-  async function GetUsuarios() {
-    return Request('/usuarios');
+  async function GetUsuarios(search, page, limit, sortBy, sortDir) {
+    const q = new URLSearchParams();
+    if (search) q.set('search', search);
+    if (page) q.set('page', page);
+    if (limit) q.set('limit', limit);
+    if (sortBy) q.set('sortBy', sortBy);
+    if (sortDir) q.set('sortDir', sortDir);
+    const qs = q.toString();
+    return Request(`/usuarios${qs ? '?' + qs : ''}`);
   }
   async function GetUsuarioByGuid(guid) { return Request(`/usuarios/${guid}`); }
   async function CreateUsuario(data) { return Request('/usuarios/crear', { method: 'POST', body: JSON.stringify(data) }); }
@@ -406,5 +413,6 @@ const API = (function () {
     GetCajaDiaria, GetCajaDiariaResumen,
     AutorizarARCA,
     GetMaxDescuento, SetMaxDescuento, GetAuditoriaPrecios,
+    GetVersion: () => Request('/version'),
   };
 })();
