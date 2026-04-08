@@ -15,6 +15,7 @@ const State = {
   sucursalActual: null,
   currentSection: 'pos',
   usuario: null,
+  maxDescuento: 10,
 };
 
 // ── Utilidades ─────────────────────────────────────────────────────────────────
@@ -216,6 +217,14 @@ async function InitApp() {
     State.tiposCobrosPagos = tiposCobrosPagos;
     State.bancosCuentas = bancosCuentas;
 
+    // Cargar configuración de descuento máximo
+    try {
+      const cfg = await API.GetMaxDescuento();
+      State.maxDescuento = cfg.porcentaje;
+    } catch (e) {
+      console.warn('No se pudo cargar config de descuento, usando default:', e.message);
+    }
+
     // Mostrar sucursal asignada al usuario como etiqueta (no editable)
     const guidSucUsuario = (State.usuario.GUIDSUCURSALES || '').trim();
     const sucUsuario = sucursales.find(s => s.GUID.trim() === guidSucUsuario);
@@ -234,6 +243,8 @@ async function InitApp() {
     const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
     document.getElementById('navUsuarios').classList.toggle('d-none', !esAdmin);
     document.getElementById('navSucursales').classList.toggle('d-none', !esAdmin);
+    document.getElementById('navAjustes').classList.toggle('d-none', !esAdmin);
+    document.getElementById('navAuditoriaPrecios').classList.toggle('d-none', !esAdmin);
 
     App.Navigate('pos');
   } catch (err) {
@@ -311,6 +322,7 @@ const App = {
       case 'ventas': RenderVentas(main); break;
       case 'devoluciones': RenderDevoluciones(main); break;
       case 'cambios': RenderCambios(main); break;
+      case 'articulos': RenderArticulosCRUD(main); break;
       case 'transferencias': RenderTransferencias(main); break;
       case 'compras': RenderCompras(main); break;
       case 'gastos': RenderGastos(main); break;
@@ -320,6 +332,8 @@ const App = {
       case 'bancos': RenderBancos(main); break;
       case 'sucursales': RenderSucursales(main); break;
       case 'usuarios': RenderUsuarios(main); break;
+      case 'ajustes': RenderAjustes(main); break;
+      case 'auditoria-precios': RenderAuditoriaPrecios(main); break;
     }
   },
 };
@@ -345,6 +359,11 @@ const POS = {
     POS._cobroDeudaData = null;
     POS._cfEmail = null;
     POS._cfCelular = null;
+    POS._interes = 0;
+    POS._coeficiente = 0;
+    POS._recargoCredito = false;
+    POS._creditosDisponibles = null;
+    POS._autoAplicarCredito = false;
   },
 
   GetTotal() {
@@ -386,7 +405,8 @@ const POS = {
       }
 
       // 2. Si no hay match exacto, buscar por descripción/código parcial
-      const resultados = await API.GetArticulos(texto);
+      const _artResp = await API.GetArticulos(texto);
+      const resultados = _artResp.data || _artResp;
       if (resultados.length === 0) {
         ShowToast('Aviso', 'No se encontraron artículos', 'info');
         return;
@@ -416,6 +436,16 @@ const POS = {
     if (existing) {
       existing.cantidad++;
     } else {
+      let precioBase = art.PRECIOVENTA || 0;
+      let precioUnitario = precioBase;
+      // Aplicar recargo del tipo de pago seleccionado
+      if (POS._coeficiente > 0 && POS._coeficiente !== 1) {
+        precioUnitario = precioBase / POS._coeficiente;
+      } else if (POS._interes > 0) {
+        precioUnitario = precioBase * (1 + POS._interes / 100);
+      }
+      precioUnitario = Math.round(precioUnitario * 100) / 100;
+
       POS.items.push({
         guidArticulo: art.GUID,
         guidMovimientoArticulo: mov ? mov.GUID : '',
@@ -424,7 +454,9 @@ const POS = {
         talle: mov ? mov.NUMERO : 0,
         color: mov ? (mov.COLOR || '').trim() : (art.COLOR || '').trim(),
         cantidad: 1,
-        precioUnitario: art.PRECIOVENTA || 0,
+        precioBase: precioBase,
+        precioMedioPago: precioUnitario,
+        precioUnitario: precioUnitario,
         precioCosto: art.PRECIOCOSTO || 0,
       });
     }
@@ -441,6 +473,146 @@ const POS = {
   CambiarCantidad(idx, delta) {
     POS.items[idx].cantidad += delta;
     if (POS.items[idx].cantidad <= 0) POS.items.splice(idx, 1);
+    RenderPOSItems();
+  },
+
+  // ── Tipo de pago en POS ──────────────────────────────────────────────────
+  CambiarTipoPago() {
+    const sel = document.getElementById('posTipoPago');
+    const tipo = State.tiposCobrosPagos.find(t => t.GUID.trim() === sel.value);
+    const tipoNum = tipo ? tipo.TIPO : null;
+
+    // Poblar comprobantes
+    const divComp = document.getElementById('posCompDiv');
+    const selComp = document.getElementById('posComprobante');
+    const comprobantes = tipoNum !== null ? State.tcPagos.filter(t => t.TIPO === tipoNum) : [];
+
+    if (comprobantes.length > 0) {
+      divComp.classList.remove('d-none');
+      selComp.innerHTML = comprobantes.length > 1 ? '<option value="">Seleccione...</option>' : '';
+      comprobantes.forEach(tc => {
+        const opt = document.createElement('option');
+        opt.value = tc.GUID.trim();
+        opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
+        selComp.appendChild(opt);
+      });
+      if (comprobantes.length === 1) selComp.value = comprobantes[0].GUID.trim();
+    } else {
+      divComp.classList.add('d-none');
+      selComp.innerHTML = '';
+    }
+
+    // Limpiar plan
+    document.getElementById('posPlanDiv').classList.add('d-none');
+    document.getElementById('posPlan').innerHTML = '';
+
+    POS.CambiarComprobante();
+  },
+
+  CambiarComprobante() {
+    const selComp = document.getElementById('posComprobante');
+    const comp = State.tcPagos.find(t => t.GUID.trim() === (selComp ? selComp.value : ''));
+
+    // Cargar planes si el comprobante tiene
+    const divPlan = document.getElementById('posPlanDiv');
+    const selPlan = document.getElementById('posPlan');
+    if (comp && comp.CANTPLANES > 0) {
+      divPlan.classList.remove('d-none');
+      selPlan.innerHTML = '<option value="">Sin plan</option>';
+      API.GetTCPagosPlanes(comp.GUID.trim()).then(planes => {
+        planes.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = JSON.stringify({ interes: p.INTERES, coeficiente: p.COEFICIENTE });
+          opt.textContent = `${(p.NOMBRECOMPROBANTEPAGO || '').trim()} - ${p.CUOTAS} cuotas`;
+          selPlan.appendChild(opt);
+        });
+      });
+    } else {
+      divPlan.classList.add('d-none');
+      selPlan.innerHTML = '';
+    }
+
+    POS.CambiarPlan();
+  },
+
+  CambiarPlan() {
+    // Si los precios están fijados por un crédito aplicado, no recalcular
+    if (POS._recargoCredito) return;
+
+    const selPlan = document.getElementById('posPlan');
+    const selComp = document.getElementById('posComprobante');
+    const comp = State.tcPagos.find(t => t.GUID.trim() === (selComp ? selComp.value : ''));
+    let interes = 0;
+    let coeficiente = 0;
+
+    // Plan tiene prioridad sobre comprobante
+    if (selPlan && selPlan.value) {
+      try {
+        const planData = JSON.parse(selPlan.value);
+        interes = planData.interes || 0;
+        coeficiente = planData.coeficiente || 0;
+      } catch (_) {}
+    } else if (comp) {
+      interes = comp.INTERES || 0;
+      coeficiente = comp.COEFICIENTE || 0;
+    }
+
+    POS._interes = interes;
+    POS._coeficiente = coeficiente;
+
+    // Mostrar info de recargo
+    const divInfo = document.getElementById('posRecargoInfo');
+    const hayRecargo = (coeficiente > 0 && coeficiente !== 1) || interes > 0;
+    if (hayRecargo) {
+      divInfo.classList.remove('d-none');
+      divInfo.innerHTML = `<span class="badge text-bg-warning fs-6"><i class="bi bi-percent me-1"></i>Recargo: ${interes}% | Coef: ${coeficiente}</span>`;
+    } else {
+      divInfo.classList.add('d-none');
+      divInfo.innerHTML = '';
+    }
+
+    POS.RecalcularPrecios();
+  },
+
+  RecalcularPrecios() {
+    for (const item of POS.items) {
+      let precio = item.precioBase;
+      if (POS._coeficiente > 0 && POS._coeficiente !== 1) {
+        precio = precio / POS._coeficiente;
+      } else if (POS._interes > 0) {
+        precio = precio * (1 + POS._interes / 100);
+      }
+      item.precioMedioPago = Math.round(precio * 100) / 100;
+      item.precioUnitario = item.precioMedioPago;
+    }
+    RenderPOSItems();
+  },
+
+  CambiarPrecio(idx, valor) {
+    const item = POS.items[idx];
+    const nuevo = parseFloat(valor);
+    if (isNaN(nuevo) || nuevo <= 0) {
+      ShowToast('Aviso', 'Ingrese un precio válido', 'warning');
+      document.getElementById(`posPrecio_${idx}`).value = item.precioUnitario;
+      return;
+    }
+    // Precio de referencia: el precio con recargo aplicado (o el base si no hay recargo)
+    let precioReferencia = item.precioBase;
+    if (POS._coeficiente > 0 && POS._coeficiente !== 1) {
+      precioReferencia = Math.round((item.precioBase / POS._coeficiente) * 100) / 100;
+    } else if (POS._interes > 0) {
+      precioReferencia = Math.round((item.precioBase * (1 + POS._interes / 100)) * 100) / 100;
+    }
+    // Si el nuevo precio es menor al de referencia, validar contra % máximo de descuento
+    if (nuevo < precioReferencia) {
+      const descPct = ((precioReferencia - nuevo) / precioReferencia) * 100;
+      if (descPct > State.maxDescuento) {
+        ShowToast('Descuento no permitido', `El descuento (${descPct.toFixed(1)}%) supera el máximo permitido (${State.maxDescuento}%)`, 'error');
+        document.getElementById(`posPrecio_${idx}`).value = item.precioUnitario;
+        return;
+      }
+    }
+    item.precioUnitario = nuevo;
     RenderPOSItems();
   },
 
@@ -463,6 +635,14 @@ const POS = {
       sel.addEventListener('change', handler);
       sel.addEventListener('blur', handler);
       ShowToast('Aviso', 'Seleccione un vendedor antes de cobrar', 'error');
+      return;
+    }
+    const posTipoPago = document.getElementById('posTipoPago');
+    if (!posTipoPago || !posTipoPago.value) {
+      posTipoPago.focus();
+      posTipoPago.classList.add('is-invalid');
+      setTimeout(() => posTipoPago.classList.remove('is-invalid'), 3000);
+      ShowToast('Aviso', 'Seleccione un tipo de pago antes de cobrar', 'error');
       return;
     }
     POS.pagos = [];
@@ -551,8 +731,17 @@ const POS = {
   },
 
   OnPlanChange() {
-    const baseTotal = POS._cambioData && POS._cambioData.diferencia > 0 ? POS._cambioData.diferencia : POS.GetTotal();
-    AplicarRecargo(baseTotal);
+    const esCambioDif = POS._cambioData && POS._cambioData.diferencia > 0;
+    const cambioConRecargoOrig = esCambioDif && (
+      (POS._cambioData.coeficiente && POS._cambioData.coeficiente !== 0 && POS._cambioData.coeficiente !== 1) ||
+      (POS._cambioData.interes && POS._cambioData.interes > 0)
+    );
+    // Si el cambio ya tiene recargo original, los precios ya lo incluyen — no re-aplicar
+    if (cambioConRecargoOrig) return;
+    const baseTotal = esCambioDif ? POS._cambioData.diferencia : POS.GetTotal();
+    const cambioSinRecargo = esCambioDif && !cambioConRecargoOrig;
+    const recargoOpts = cambioSinRecargo ? { cambioCredito: POS._cambioData.totalCambio } : undefined;
+    AplicarRecargo(baseTotal, recargoOpts);
   },
 
   AgregarPago() {
@@ -673,6 +862,10 @@ const POS = {
       pago.coeficiente = planData.coeficiente;
       pago.descripcion += ` ${planData.cuotas} cuotas`;
     }
+
+    // Siempre propagar interes/coeficiente del POS (puede venir del comprobante, plan o cambio)
+    if (!pago.interes && POS._interes > 0) pago.interes = POS._interes;
+    if (!pago.coeficiente && POS._coeficiente > 0) pago.coeficiente = POS._coeficiente;
 
     if (esCreditoDev) {
       const selCredito = document.getElementById('pagoCreditoDev');
@@ -860,6 +1053,7 @@ const POS = {
         guidSucursal: State.sucursalActual,
         guidVendedor: POS.vendedor || null,
         guidUsuario: (State.usuario && State.usuario.GUID) || '',
+        nombreUsuario: (State.usuario && State.usuario.NOMBRE) || '',
         nombre: POS.cliente ? (POS.cliente.NOMBRE || '').trim() : 'CONSUMIDOR FINAL',
         cuit: POS.cliente ? (POS.cliente.CUIT || '').trim() : '',
         tipoOperacion: 'VENTA',
@@ -905,12 +1099,13 @@ const POS = {
       el.innerHTML = `
         <span class="badge bg-primary badge-lg me-2"><i class="bi bi-person-fill me-1"></i>${(cliente.NOMBRE || '').trim()}</span>
         <small class="text-muted">CUIT: ${(cliente.CUIT || '').trim()} | Saldo: ${FormatMoney(cliente.SALDO)}</small>
-        <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>'; ToggleTitularTarjeta();">
+        <button class="btn btn-sm btn-outline-danger ms-2" onclick="LimpiarClientePOS()">
           <i class="bi bi-x"></i>
         </button>
       `;
     }
     ToggleTitularTarjeta();
+    NotificarCreditoCliente();
   },
 };
 
@@ -940,7 +1135,26 @@ function RenderPOS(container) {
         </div>
       </div>
 
+      <div class="row g-2 mb-3 align-items-end">
+        <div class="col-auto">
+          <label class="form-label mb-0 small text-muted">Tipo de Pago</label>
+          <select id="posTipoPago" class="form-select form-select-sm" onchange="POS.CambiarTipoPago()">
+            <option value="">Seleccione...</option>
+          </select>
+        </div>
+        <div class="col-auto d-none" id="posCompDiv">
+          <label class="form-label mb-0 small text-muted">Comprobante</label>
+          <select id="posComprobante" class="form-select form-select-sm" onchange="POS.CambiarComprobante()"></select>
+        </div>
+        <div class="col-auto d-none" id="posPlanDiv">
+          <label class="form-label mb-0 small text-muted">Plan</label>
+          <select id="posPlan" class="form-select form-select-sm" onchange="POS.CambiarPlan()"></select>
+        </div>
+        <div class="col-auto d-none" id="posRecargoInfo"></div>
+      </div>
+
       <div id="posClienteInfo" class="mb-2"><em class="text-muted">Consumidor Final</em></div>
+      <div id="posCreditoAviso"></div>
 
       <div id="tallesContainer" class="mb-3"></div>
 
@@ -993,6 +1207,56 @@ function RenderPOS(container) {
     selVend.appendChild(opt);
   });
 
+  // Tipos de pago dropdown
+  const selTipoPago = document.getElementById('posTipoPago');
+  State.tiposCobrosPagos
+    .filter(t => {
+      const mov = (t.TIPOMOVIMIENTO || '').trim();
+      return mov !== 'E' && mov !== 'X' && t.TIPO !== 9; // Excluir egresos, ctacte y crédito dev
+    })
+    .forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.GUID.trim();
+      opt.textContent = (t.DESCRIPCION || '').trim();
+      selTipoPago.appendChild(opt);
+    });
+  // Seleccionar tipo de pago por defecto
+  if (POS._cambioData && POS._cambioData.tipoPago) {
+    const cd = POS._cambioData;
+    const tieneRecargoOrig = (cd.coeficiente && cd.coeficiente !== 0 && cd.coeficiente !== 1) || (cd.interes && cd.interes > 0);
+
+    if (tieneRecargoOrig) {
+      // Con recargo original: bloquear selector al tipo original y aplicar recargo
+      const tipoPagoCambio = cd.tipoPago;
+      let compOrig = null;
+      let bestLen = 0;
+      for (const tc of State.tcPagos) {
+        const nombre = (tc.TIPO_COMPROBANTE || '').trim();
+        if (nombre && tipoPagoCambio.startsWith(nombre) && nombre.length > bestLen) {
+          compOrig = tc;
+          bestLen = nombre.length;
+        }
+      }
+      if (compOrig) {
+        const tipoCobro = State.tiposCobrosPagos.find(t => t.TIPO === compOrig.TIPO);
+        if (tipoCobro && selTipoPago.querySelector(`option[value="${tipoCobro.GUID.trim()}"]`)) {
+          selTipoPago.value = tipoCobro.GUID.trim();
+        }
+      }
+      selTipoPago.disabled = true;
+      selTipoPago.title = 'En modo cambio se usa el medio de pago de la venta original';
+      POS._interes = cd.interes || 0;
+      POS._coeficiente = cd.coeficiente || 0;
+    } else {
+      // Sin recargo original: selector libre, precios base
+      const efectivoOpt = State.tiposCobrosPagos.find(t => (t.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO');
+      if (efectivoOpt) selTipoPago.value = efectivoOpt.GUID.trim();
+    }
+  } else {
+    const efectivoOpt = State.tiposCobrosPagos.find(t => (t.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO');
+    if (efectivoOpt) selTipoPago.value = efectivoOpt.GUID.trim();
+  }
+
   // Search on Enter
   document.getElementById('posSearch').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -1007,7 +1271,8 @@ function RenderPOS(container) {
     const val = e.target.value.trim();
     if (val.length < 2) { document.getElementById('tallesContainer').innerHTML = ''; return; }
     try {
-      const arts = await API.GetArticulos(val);
+      const _sugResp = await API.GetArticulos(val);
+      const arts = _sugResp.data || _sugResp;
       if (arts.length === 0) return;
       if (arts.length === 1) {
         // Auto-load first result
@@ -1094,7 +1359,12 @@ function RenderPOSItems() {
             <button class="btn btn-outline-secondary" onclick="POS.CambiarCantidad(${i}, 1)"><i class="bi bi-plus"></i></button>
           </div>
         </td>
-        <td class="text-end">${FormatMoney(item.precioUnitario)}</td>
+        <td class="text-end">
+          <input type="number" id="posPrecio_${i}" class="form-control form-control-sm text-end${item.precioUnitario !== item.precioBase ? ' border-warning' : ''}"
+            style="width:110px;display:inline-block" value="${item.precioUnitario}" min="0" step="0.01"
+            onchange="POS.CambiarPrecio(${i}, this.value)"
+            title="Base: ${FormatMoney(item.precioBase)}">
+        </td>
         <td class="text-end fw-bold">${FormatMoney(item.cantidad * item.precioUnitario)}</td>
         <td><button class="btn btn-sm btn-outline-danger" onclick="POS.QuitarItem(${i})"><i class="bi bi-trash"></i></button></td>
       </tr>
@@ -1151,7 +1421,9 @@ function GetComprobanteSel() {
   return State.tcPagos.find(t => t.GUID.trim() === sel.value) || null;
 }
 
-function AplicarRecargo(totalBase) {
+// opts.cambioCredito: si se pasa, calcula recargo sobre totalBase + credito, luego resta credito
+function AplicarRecargo(totalBase, opts) {
+  const cambioCredito = (opts && opts.cambioCredito) || 0;
   const div = document.getElementById('divRecargoInfo');
   const compSel = GetComprobanteSel();
   const selPlan = document.getElementById('pagoPlan');
@@ -1174,20 +1446,41 @@ function AplicarRecargo(totalBase) {
   }
 
   const totalPagos = POS.GetTotalPagos();
-  // Lo que falta pagar SIN recargo
-  const restanteBase = totalBase - totalPagos;
+
+  // Para cambio sin recargo original: recargo sobre (total venta nueva), luego restar crédito
+  let restanteBase;
+  if (cambioCredito > 0) {
+    const totalVentaNueva = totalBase + cambioCredito;
+    let totalConRecargo = totalVentaNueva;
+    if (coeficiente > 0 && coeficiente !== 1) {
+      totalConRecargo = totalVentaNueva / coeficiente;
+    } else if (interes > 0) {
+      totalConRecargo = totalVentaNueva * (1 + interes / 100);
+    }
+    totalConRecargo = Math.round(totalConRecargo * 100) / 100;
+    restanteBase = totalConRecargo - cambioCredito - totalPagos;
+  } else {
+    restanteBase = totalBase - totalPagos;
+  }
 
   // Mostrar siempre si hay comprobante o plan seleccionado
   if (compSel || origen === 'plan') {
-    // Calcular recargo solo sobre el restante (lo que falta pagar), no sobre el total completo
-    let restanteConRecargo = restanteBase;
-    if (coeficiente > 0 && coeficiente !== 1) {
-      restanteConRecargo = restanteBase / coeficiente;
-    } else if (interes > 0) {
-      restanteConRecargo = restanteBase * (1 + interes / 100);
+    let restanteConRecargo;
+    if (cambioCredito > 0) {
+      // Ya calculamos con recargo arriba
+      restanteConRecargo = restanteBase;
+    } else {
+      // Calcular recargo sobre el restante
+      restanteConRecargo = restanteBase;
+      if (coeficiente > 0 && coeficiente !== 1) {
+        restanteConRecargo = restanteBase / coeficiente;
+      } else if (interes > 0) {
+        restanteConRecargo = restanteBase * (1 + interes / 100);
+      }
     }
     restanteConRecargo = Math.round(restanteConRecargo * 100) / 100;
-    const hayRecargo = Math.abs(restanteConRecargo - restanteBase) > 0.01;
+    const diferenciaBase = totalBase - totalPagos;
+    const hayRecargo = Math.abs(restanteConRecargo - diferenciaBase) > 0.01;
     // Total a pagar = pagos ya hechos + restante con recargo
     const totalFinal = totalPagos + restanteConRecargo;
 
@@ -1200,7 +1493,7 @@ function AplicarRecargo(totalBase) {
           <span>Coeficiente: <strong>${coeficiente}</strong></span>
           ${hayRecargo ? `
           <span>|</span>
-          <span>Base: ${FormatMoney(restanteBase)}</span>
+          <span>Base: ${FormatMoney(diferenciaBase)}</span>
           <span class="fs-5">&rarr;</span>
           <span class="text-danger fs-5 fw-bold">${FormatMoney(restanteConRecargo)}</span>
           ` : ''}
@@ -1240,21 +1533,77 @@ function AplicarRecargo(totalBase) {
 }
 
 async function RenderPagosModal() {
-  // Usar siempre el total base (sin recargo) para calcular; AplicarRecargo actualizará los labels
   const esCobroDeuda = POS._modoCobroDeuda && POS._cobroDeudaData;
+  const esCambioDiferencia = !esCobroDeuda && POS._cambioData && POS._cambioData.diferencia > 0;
+  const cambioConRecargoOrig = esCambioDiferencia && (
+    (POS._cambioData.coeficiente && POS._cambioData.coeficiente !== 0 && POS._cambioData.coeficiente !== 1) ||
+    (POS._cambioData.interes && POS._cambioData.interes > 0)
+  );
+  const cambioSinRecargoOrig = esCambioDiferencia && !cambioConRecargoOrig;
+  const esVentaNormal = !esCobroDeuda && !esCambioDiferencia;
+
   let baseTotal;
   if (esCobroDeuda) {
     baseTotal = POS._cobroDeudaData.total;
-  } else if (POS._cambioData && POS._cambioData.diferencia > 0) {
+  } else if (esCambioDiferencia) {
     baseTotal = POS._cambioData.diferencia;
   } else {
+    // En ventas normales, el total ya incluye recargo en los precios
     baseTotal = POS.GetTotal();
   }
   const total = baseTotal;
   const totalPagos = POS.GetTotalPagos();
   const restante = total - totalPagos;
 
-  // ── 1. Poblar TiposCobrosPagos (TIPOMOVIMIENTO != 'E', excluir CTACTE en cobro deuda) ──
+  // ── Info read-only del tipo de pago (ventas normales) ──
+  const divInfoTP = document.getElementById('pagoTipoPagoInfo');
+  const divSelectores = document.getElementById('divPagoSelectores');
+
+  if (esVentaNormal) {
+    // Mostrar tipo de pago como read-only
+    const posTipoPago = document.getElementById('posTipoPago');
+    const tipoTexto = posTipoPago ? posTipoPago.options[posTipoPago.selectedIndex]?.text || '-' : '-';
+    const posComp = document.getElementById('posComprobante');
+    const compTexto = posComp && posComp.value ? (posComp.options[posComp.selectedIndex]?.text || '') : '';
+    const posPlanEl = document.getElementById('posPlan');
+    const planTexto = posPlanEl && posPlanEl.value ? (posPlanEl.options[posPlanEl.selectedIndex]?.text || '') : '';
+
+    let infoHtml = `
+      <div class="col-auto">
+        <label class="form-label fw-semibold mb-0">Tipo de Pago</label>
+        <div class="form-control-plaintext fw-bold fs-5">${tipoTexto}</div>
+      </div>`;
+    if (compTexto) {
+      infoHtml += `
+      <div class="col-auto">
+        <label class="form-label fw-semibold mb-0">Medio de Cobro</label>
+        <div class="form-control-plaintext fw-bold fs-5">${compTexto}</div>
+      </div>`;
+    }
+    if (planTexto) {
+      infoHtml += `
+      <div class="col-auto">
+        <label class="form-label fw-semibold mb-0">Plan</label>
+        <div class="form-control-plaintext fw-bold fs-5">${planTexto}</div>
+      </div>`;
+    }
+    if (POS._interes > 0 || (POS._coeficiente > 0 && POS._coeficiente !== 1)) {
+      infoHtml += `
+      <div class="col-auto d-flex align-items-end">
+        <span class="badge text-bg-warning fs-6 mb-1"><i class="bi bi-percent me-1"></i>Recargo: ${POS._interes}% | Coef: ${POS._coeficiente}</span>
+      </div>`;
+    }
+    divInfoTP.innerHTML = infoHtml;
+    divInfoTP.classList.remove('d-none');
+    divSelectores.classList.add('d-none');
+  } else {
+    // Cobro deuda / cambios: mostrar selectores editables
+    divInfoTP.classList.add('d-none');
+    divInfoTP.innerHTML = '';
+    divSelectores.classList.remove('d-none');
+  }
+
+  // ── 1. Poblar TiposCobrosPagos (internamente, para AgregarPago) ──
   const sel = document.getElementById('pagoTipo');
   const prevTipo = POS._resetTipoPago ? '' : sel.value;
   POS._resetTipoPago = false;
@@ -1263,8 +1612,8 @@ async function RenderPagosModal() {
     .filter(t => {
       const mov = (t.TIPOMOVIMIENTO || '').trim();
       if (mov === 'E') return false;
-      if (esCobroDeuda && mov === 'X') return false; // Excluir CTACTE en cobro de deuda
-      if (esCobroDeuda && t.TIPO === 9) return false; // Excluir Credito Devoluciones en cobro de deuda
+      if (esCobroDeuda && mov === 'X') return false;
+      if (esCobroDeuda && t.TIPO === 9) return false;
       return true;
     })
     .forEach(t => {
@@ -1273,10 +1622,14 @@ async function RenderPagosModal() {
       opt.textContent = (t.DESCRIPCION || '').trim();
       sel.appendChild(opt);
     });
-  if (prevTipo && sel.querySelector(`option[value="${prevTipo}"]`)) {
+
+  if (esVentaNormal) {
+    // Forzar selección al tipo del POS
+    const posTipoPago = document.getElementById('posTipoPago');
+    if (posTipoPago && posTipoPago.value) sel.value = posTipoPago.value;
+  } else if (prevTipo && sel.querySelector(`option[value="${prevTipo}"]`)) {
     sel.value = prevTipo;
   } else {
-    // Por defecto seleccionar EFECTIVO
     const efectivoOpt = State.tiposCobrosPagos.find(t => (t.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO');
     if (efectivoOpt && sel.querySelector(`option[value="${efectivoOpt.GUID.trim()}"]`)) {
       sel.value = efectivoOpt.GUID.trim();
@@ -1291,45 +1644,26 @@ async function RenderPagosModal() {
   const esCreditoDev = tipoSel ? tipoSel.TIPO === 9 : false;
   const esNoEfectivo = !esEfectivo;
 
-  // ── 2. Poblar Comprobantes filtrados por TIPO del TipoCobroPago ──
+  // ── 2. Poblar Comprobantes (internamente) ──
   const divComp = document.getElementById('divComprobante');
   const selComp = document.getElementById('pagoComprobante');
-  const prevComp = selComp.value;
   const comprobantes = tipoNum !== null ? State.tcPagos.filter(t => t.TIPO === tipoNum) : [];
   const roComp = document.getElementById('pagoComprobanteRO');
   if (comprobantes.length > 0) {
     divComp.classList.remove('d-none');
-    if (comprobantes.length === 1 && comprobantes[0].CANTPLANES === 0) {
-      // Unico comprobante sin planes: mostrar como readonly
-      selComp.style.display = 'none';
-      selComp.innerHTML = '';
+    selComp.style.display = '';
+    roComp.style.display = 'none';
+    selComp.innerHTML = '';
+    comprobantes.forEach(tc => {
       const opt = document.createElement('option');
-      opt.value = comprobantes[0].GUID.trim();
-      opt.textContent = (comprobantes[0].TIPO_COMPROBANTE || '').trim();
+      opt.value = tc.GUID.trim();
+      opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
       selComp.appendChild(opt);
-      selComp.value = opt.value;
-      roComp.value = (comprobantes[0].TIPO_COMPROBANTE || '').trim();
-      roComp.style.display = '';
-    } else if (comprobantes.length === 1) {
-      selComp.style.display = '';
-      roComp.style.display = 'none';
-      selComp.innerHTML = '';
-      const opt = document.createElement('option');
-      opt.value = comprobantes[0].GUID.trim();
-      opt.textContent = (comprobantes[0].TIPO_COMPROBANTE || '').trim();
-      selComp.appendChild(opt);
-      selComp.value = opt.value;
-    } else {
-      selComp.style.display = '';
-      roComp.style.display = 'none';
-      selComp.innerHTML = '<option value="">Seleccione...</option>';
-      comprobantes.forEach(tc => {
-        const opt = document.createElement('option');
-        opt.value = tc.GUID.trim();
-        opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
-        selComp.appendChild(opt);
-      });
-      if (prevComp && selComp.querySelector(`option[value="${prevComp}"]`)) selComp.value = prevComp;
+    });
+    // En venta normal, forzar comprobante del POS
+    if (esVentaNormal) {
+      const posComp = document.getElementById('posComprobante');
+      if (posComp && posComp.value) selComp.value = posComp.value;
     }
   } else {
     divComp.classList.add('d-none');
@@ -1338,13 +1672,12 @@ async function RenderPagosModal() {
     roComp.style.display = 'none';
   }
 
-  // ── 3. Planes del comprobante seleccionado ──
+  // ── 3. Planes (internamente) ──
   const compSel = GetComprobanteSel();
   const tienePlanes = compSel ? compSel.CANTPLANES > 0 : false;
   document.getElementById('divCuotas').classList.toggle('d-none', !tienePlanes);
   if (tienePlanes && compSel) {
     const selPlan = document.getElementById('pagoPlan');
-    const prevPlan = selPlan.value;
     selPlan.innerHTML = '<option value="">Sin plan</option>';
     API.GetTCPagosPlanes(compSel.GUID.trim()).then(planes => {
       planes.forEach(p => {
@@ -1353,14 +1686,28 @@ async function RenderPagosModal() {
         opt.textContent = `${(p.NOMBRECOMPROBANTEPAGO || '').trim()} - ${p.CUOTAS} cuotas (Int: ${p.INTERES}% | Coef: ${p.COEFICIENTE})`;
         selPlan.appendChild(opt);
       });
-      if (prevPlan) selPlan.value = prevPlan;
-      // ── 4. Info de recargo (después de cargar planes para no perder coeficientes) ──
-      AplicarRecargo(baseTotal);
-    }).catch(() => { AplicarRecargo(baseTotal); });
+      // En venta normal, forzar plan del POS
+      if (esVentaNormal) {
+        const posPlanEl = document.getElementById('posPlan');
+        if (posPlanEl && posPlanEl.value) selPlan.value = posPlanEl.value;
+      }
+      // Aplicar recargo: cobro deuda o cambio sin recargo original
+      if (!esVentaNormal && !cambioConRecargoOrig) {
+        const recargoOpts = cambioSinRecargoOrig ? { cambioCredito: POS._cambioData.totalCambio } : undefined;
+        AplicarRecargo(baseTotal, recargoOpts);
+      }
+    }).catch(() => {
+      if (!esVentaNormal && !cambioConRecargoOrig) {
+        const recargoOpts = cambioSinRecargoOrig ? { cambioCredito: POS._cambioData.totalCambio } : undefined;
+        AplicarRecargo(baseTotal, recargoOpts);
+      }
+    });
   } else {
     document.getElementById('pagoPlan').innerHTML = '';
-    // ── 4. Info de recargo ──
-    AplicarRecargo(baseTotal);
+    if (!esVentaNormal && !cambioConRecargoOrig) {
+      const recargoOpts = cambioSinRecargoOrig ? { cambioCredito: POS._cambioData.totalCambio } : undefined;
+      AplicarRecargo(baseTotal, recargoOpts);
+    }
   }
 
   // ── 5. Credito Devolucion ──
@@ -1377,21 +1724,29 @@ async function RenderPagosModal() {
   const yaUsaCreditoDev = POS.pagos.some(p => p._esCreditoDev);
   if (!esCobroDeuda && POS.cliente && !yaUsaCreditoDev) {
     try {
-      const creditos = await API.GetCreditosCliente(POS.cliente.GUID.trim());
+      const creditos = POS._creditosDisponibles || await API.GetCreditosCliente(POS.cliente.GUID.trim());
       const creditosActivos = creditos.filter(c => {
         const disponible = c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO);
         return disponible > 0.01;
       });
+      if (!POS._creditosDisponibles) POS._creditosDisponibles = creditosActivos;
       if (creditosActivos.length > 0) {
         const totalCredito = creditosActivos.reduce((sum, c) => sum + (c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO)), 0);
+        const primerCredito = creditosActivos[0];
+        const tieneRecargo = (primerCredito.OrigenCoeficiente && primerCredito.OrigenCoeficiente !== 0 && primerCredito.OrigenCoeficiente !== 1)
+          || (primerCredito.OrigenInteres && primerCredito.OrigenInteres > 0);
+        const infoRecargo = tieneRecargo
+          ? `<br><small>Medio de pago original: <strong>${primerCredito.OrigenTipoPago || ''}</strong> — se aplicara su recargo</small>`
+          : '';
         const avisoEl = document.createElement('div');
         avisoEl.id = 'creditoDevAviso';
         avisoEl.className = 'alert alert-info border-info py-2 px-3 mb-2 d-flex align-items-center justify-content-between';
         avisoEl.innerHTML = `
           <div>
             <i class="bi bi-gift me-2"></i>
-            <strong>${(POS.cliente.NOMBRE || '').trim()}</strong> tiene crédito por devoluciones:
+            <strong>${(POS.cliente.NOMBRE || '').trim()}</strong> tiene credito disponible:
             <span class="fw-bold text-success">${FormatMoney(totalCredito)}</span>
+            ${infoRecargo}
           </div>
           <button class="btn btn-sm btn-info" onclick="AplicarCreditoDevAutomatico()">
             <i class="bi bi-plus-circle me-1"></i>Aplicar crédito
@@ -1403,32 +1758,19 @@ async function RenderPagosModal() {
     } catch (_) {}
   }
 
-  // ── 5c. Auto-aplicar crédito de QR escaneado ──
+  // ── 5c. Auto-aplicar crédito desde banner POS ──
+  if (POS._autoAplicarCredito && !yaUsaCreditoDev && !esCobroDeuda) {
+    POS._autoAplicarCredito = false;
+    await AplicarCreditoDevAutomatico();
+    return;
+  }
+
+  // ── 5d. Auto-aplicar crédito de QR escaneado ──
   if (POS._creditoQR && !yaUsaCreditoDev && !esCobroDeuda) {
-    const cqr = POS._creditoQR;
-    POS._creditoQR = null; // Consumir para no re-aplicar
-    // Seleccionar tipo CREDITO DEVOLUCION y re-renderizar
-    const tipoCredDev = State.tiposCobrosPagos.find(t => t.TIPO === 9);
-    if (tipoCredDev) {
-      const sel = document.getElementById('pagoTipo');
-      sel.value = tipoCredDev.GUID.trim();
-      // Diferir para que se actualice el tipo y se carguen los créditos
-      setTimeout(async () => {
-        await RenderPagosModal();
-        // Auto-seleccionar el crédito escaneado en el selector
-        const selCredito = document.getElementById('pagoCreditoDev');
-        if (selCredito) {
-          for (const opt of selCredito.options) {
-            if (opt.value && opt.value.includes(cqr.guid)) {
-              selCredito.value = opt.value;
-              selCredito.dispatchEvent(new Event('change'));
-              break;
-            }
-          }
-        }
-      }, 300);
-      return; // Sale de RenderPagosModal porque se va a re-invocar
-    }
+    POS._creditoQR = null;
+    await _aplicarRecargoCredito();
+    await AplicarCreditoDevAutomatico();
+    return;
   }
 
   const reqCliente = POS.RequiereCliente();
@@ -1458,7 +1800,58 @@ async function RenderPagosModal() {
   } else if (cambioInfoEl) {
     cambioInfoEl.remove();
   }
-  // AplicarRecargo actualizará Total/Restante con los valores correctos (con o sin recargo)
+  // En venta normal o cambio con recargo original, setear restante e importe sin recargo adicional
+  if (esVentaNormal || cambioConRecargoOrig) {
+    document.getElementById('divRecargoInfo').classList.add('d-none');
+    document.getElementById('pagoRestante').textContent = FormatMoney(restante);
+    document.getElementById('pagoRestante').className = restante > 0.01 ? 'text-danger fw-bold fs-4' : 'text-success fw-bold fs-4';
+    if (restante > 0.01) {
+      document.getElementById('pagoImporte').value = restante.toFixed(2);
+    } else {
+      document.getElementById('pagoImporte').value = '';
+    }
+    ActualizarBotonConfirmar();
+
+    // Activar campos condicionales (tarjeta, cheque, cuenta bancaria) según tipo del POS
+    const desc = tipoSel ? (tipoSel.DESCRIPCION || '').trim().toUpperCase() : '';
+    const esCheque3ro = desc.indexOf('CHEQUE') >= 0 && desc.indexOf('3') >= 0;
+    const divCheque = document.getElementById('cheque3rosFields');
+    if (divCheque) { esCheque3ro ? divCheque.classList.remove('d-none') : divCheque.classList.add('d-none'); }
+
+    const esTarjeta = tipoNum === 2 || tipoNum === 3;
+    const divTarjeta = document.getElementById('tarjetaFields');
+    if (divTarjeta) {
+      if (esTarjeta) {
+        divTarjeta.classList.remove('d-none');
+        const chk = document.getElementById('tarjetaMismoTitular');
+        if (chk) { chk.checked = true; ToggleTitularTarjeta(); }
+      } else {
+        divTarjeta.classList.add('d-none');
+      }
+    }
+
+    const requiereCuentaBancaria = tipoNum === 4 || tipoNum === 8;
+    const divCuentaBancaria = document.getElementById('divCuentaBancaria');
+    const selCuentaBancaria = document.getElementById('pagoCuentaBancaria');
+    if (divCuentaBancaria && selCuentaBancaria) {
+      if (requiereCuentaBancaria) {
+        divCuentaBancaria.classList.remove('d-none');
+        const cuentasBanco = State.bancosCuentas.filter(c =>
+          !(c.TIPOCUENTA || '').trim().toUpperCase().startsWith('CAJA')
+        );
+        selCuentaBancaria.innerHTML = '<option value="">-- Seleccione cuenta --</option>'
+          + cuentasBanco.map(c => {
+            const nombre = (c.NUMEROCUENTA || c.ALIAS || '').trim();
+            const tipo = (c.TIPOCUENTA || '').trim();
+            const banco = (c.NombreBanco || '').trim();
+            return `<option value="${c.GUID.trim()}" data-guidbancos="${(c.GUIDBANCOS || '').trim()}">${banco ? banco + ' - ' : ''}${nombre} (${tipo})</option>`;
+          }).join('');
+      } else {
+        divCuentaBancaria.classList.add('d-none');
+        selCuentaBancaria.innerHTML = '';
+      }
+    }
+  }
 
   // ── PASO 2: Cliente (condicional según tipo de pago seleccionado) ──
   const zonaCliente = document.getElementById('pagoClienteZona');
@@ -1779,12 +2172,13 @@ function SeleccionarClienteDesdeModal(cliente) {
     elPOS.innerHTML = `
       <span class="badge bg-primary badge-lg me-2"><i class="bi bi-person-fill me-1"></i>${(cliente.NOMBRE || '').trim()}</span>
       <small class="text-muted">CUIT: ${(cliente.CUIT || '').trim()} | Saldo: ${FormatMoney(cliente.SALDO)}</small>
-      <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>'; ToggleTitularTarjeta();">
+      <button class="btn btn-sm btn-outline-danger ms-2" onclick="LimpiarClientePOS()">
         <i class="bi bi-x"></i>
       </button>
     `;
   }
   ToggleTitularTarjeta();
+  NotificarCreditoCliente();
 
   if (window._clienteCallbackPago) {
     window._clienteCallbackPago = false;
@@ -2563,7 +2957,7 @@ async function BuscarVentas() {
       <div class="row g-3 mb-3">
         <div class="col-md-4">
           <div class="card shadow-sm">
-            <div class="card-header bg-white fw-semibold"><i class="bi bi-pie-chart me-2"></i>Formas de Pago</div>
+            <div class="card-header bg-white fw-semibold"><i class="bi bi-pie-chart me-2"></i>Medios de Pago</div>
             <div class="card-body d-flex justify-content-center" style="height:280px;">
               <canvas id="chartPagos"></canvas>
             </div>
@@ -2627,16 +3021,61 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, t
       API.GetVentasPorSucursal({ desde, hasta }),
     ]);
 
-    // Gráfico Formas de Pago
+    // Gráfico Medios de Pago (agrupado por categoría general)
     const ctxPagos = document.getElementById('chartPagos');
     if (ctxPagos && pagosData.length > 0) {
+      // Mapear TipoPago al TIPO numérico usando TCPagos (matchear inicio del nombre)
+      const tipoMap = { 1: 'Efectivo', 2: 'Tarjeta Credito', 3: 'Tarjeta Credito', 4: 'Transferencia',
+        5: 'QR / Mercado Pago', 6: 'Cheques', 7: 'Cheques', 8: 'Transferencia',
+        9: 'Credito Devolucion', 10: 'Cuenta Corriente' };
+      // Build lookup: TCP name → TIPO category
+      const tcpNombres = (State.tcPagos || []).map(tc => ({
+        nombre: (tc.TIPO_COMPROBANTE || '').trim().toUpperCase(),
+        tipo: tc.TIPO,
+      })).filter(n => n.nombre).sort((a, b) => b.nombre.length - a.nombre.length);
+
+      function clasificarPago(tipoPago) {
+        const t = (tipoPago || '').toUpperCase().trim();
+        if (!t) return 'Otros';
+        // Credito Devolucion siempre empieza con "Credito Dev."
+        if (t.startsWith('CREDITO DEV')) return 'Credito Devolucion';
+        // Buscar match por nombre de comprobante (el más largo primero)
+        for (const tcp of tcpNombres) {
+          if (t.startsWith(tcp.nombre) && tcp.tipo != null) {
+            return tipoMap[tcp.tipo] || 'Otros';
+          }
+        }
+        // Fallback por keywords
+        if (t === 'EFECTIVO') return 'Efectivo';
+        if (t.includes('DEBITO') || t.includes('MAESTRO')) return 'Tarjeta Debito';
+        if (t.includes('TRANSFERENCIA') || t.includes('DEPOSITO')) return 'Transferencia';
+        if (t.includes('MERCADO') || t.includes('QR')) return 'QR / Mercado Pago';
+        if (t.includes('CHEQUE')) return 'Cheques';
+        if (t.includes('CTA') || t.includes('CUENTA')) return 'Cuenta Corriente';
+        return 'Otros';
+      }
+
+      const categorias = {};
+      pagosData.forEach(p => {
+        const cat = clasificarPago(p.TipoPago);
+        if (!categorias[cat]) categorias[cat] = 0;
+        categorias[cat] += (p.Total || 0);
+      });
+      const catLabels = Object.keys(categorias);
+      const catValues = Object.values(categorias);
+      const catColors = {
+        'Efectivo': '#198754', 'Tarjeta Credito': '#0d6efd', 'Tarjeta Debito': '#6610f2',
+        'Transferencia': '#0dcaf0', 'QR / Mercado Pago': '#20c997', 'Cheques': '#6c757d',
+        'Credito Devolucion': '#fd7e14', 'Cuenta Corriente': '#ffc107', 'Otros': '#adb5bd',
+      };
+
       new Chart(ctxPagos, {
         type: 'pie',
         data: {
-          labels: pagosData.map(p => p.TipoPago || 'Sin tipo'),
+          labels: catLabels,
           datasets: [{
-            data: pagosData.map(p => p.Total || 0),
-            backgroundColor: CHART_COLORS.slice(0, pagosData.length),
+            data: catValues,
+            backgroundColor: catLabels.map(l => catColors[l] || '#adb5bd'),
             borderWidth: 2,
             borderColor: '#fff',
           }],
@@ -2645,10 +3084,16 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, t
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: { position: 'bottom', labels: { padding: 15, usePointStyle: true } },
+            legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, font: { size: 12, weight: 'bold' }, boxWidth: 12 } },
             tooltip: {
+              titleFont: { size: 13, weight: 'bold' },
+              bodyFont: { size: 13 },
               callbacks: {
-                label: (ctx) => `${ctx.label}: ${FormatMoney(ctx.raw)} (${ctx.dataset.data.reduce((a, b) => a + b, 0) > 0 ? ((ctx.raw / ctx.dataset.data.reduce((a, b) => a + b, 0)) * 100).toFixed(1) : 0}%)`
+                label: (ctx) => {
+                  const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                  const pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+                  return ` ${FormatMoney(ctx.raw)} (${pct}%)`;
+                }
               }
             }
           },
@@ -2664,7 +3109,7 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, t
       new Chart(ctxSuc, {
         type: 'pie',
         data: {
-          labels: sucursalesData.map(s => s.Sucursal || 'Sin sucursal'),
+          labels: sucursalesData.map(s => (s.Sucursal || 'Sin sucursal').trim()),
           datasets: [{
             data: sucursalesData.map(s => s.Total || 0),
             backgroundColor: CHART_COLORS.slice(0, sucursalesData.length).reverse(),
@@ -2676,10 +3121,16 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, t
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: { position: 'bottom', labels: { padding: 15, usePointStyle: true } },
+            legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, font: { size: 12 }, boxWidth: 12 } },
             tooltip: {
+              titleFont: { size: 13 },
+              bodyFont: { size: 13 },
               callbacks: {
-                label: (ctx) => `${ctx.label}: ${FormatMoney(ctx.raw)} (${ctx.dataset.data.reduce((a, b) => a + b, 0) > 0 ? ((ctx.raw / ctx.dataset.data.reduce((a, b) => a + b, 0)) * 100).toFixed(1) : 0}%)`
+                label: (ctx) => {
+                  const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                  const pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+                  return ` ${FormatMoney(ctx.raw)} (${pct}%)`;
+                }
               }
             }
           },
@@ -2692,19 +3143,19 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, t
     // Gráfico Devoluciones vs Cambios vs Ventas
     const ctxDev = document.getElementById('chartDevoluciones');
     const totalDevCam = totalDev + totalCambios;
-    const totalBase = Math.max(totalVentas, totalDevCam, totalVentas + totalDevCam);
     const ventasNetas = Math.max(totalVentas - totalDevCam, 0);
     if (ctxDev && (totalVentas > 0 || totalDevCam > 0)) {
-      const divisor = totalVentas > 0 ? totalVentas : totalDevCam;
-      const pctDev = ((totalDev / divisor) * 100).toFixed(1);
-      const pctCam = ((totalCambios / divisor) * 100).toFixed(1);
-      const pctNetas = totalVentas > 0 ? Math.max(100 - pctDev - pctCam, 0).toFixed(1) : '0.0';
+      // Porcentajes sobre el total bruto (ventas + dev + cambios) para que sumen 100%
+      const totalBruto = totalVentas + totalDev + totalCambios;
+      const pctVentas = totalBruto > 0 ? ((totalVentas / totalBruto) * 100).toFixed(1) : '0.0';
+      const pctDev = totalBruto > 0 ? ((totalDev / totalBruto) * 100).toFixed(1) : '0.0';
+      const pctCam = totalBruto > 0 ? ((totalCambios / totalBruto) * 100).toFixed(1) : '0.0';
       new Chart(ctxDev, {
         type: 'doughnut',
         data: {
-          labels: [`Ventas Netas (${pctNetas}%)`, `Devoluciones (${pctDev}%)`, `Cambios (${pctCam}%)`],
+          labels: ['Ventas', 'Devoluciones', 'Cambios'],
           datasets: [{
-            data: [ventasNetas, totalDev, totalCambios],
+            data: [totalVentas, totalDev, totalCambios],
             backgroundColor: ['#198754', '#dc3545', '#fd7e14'],
             borderWidth: 2,
             borderColor: '#fff',
@@ -2715,10 +3166,15 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, t
           maintainAspectRatio: false,
           cutout: '55%',
           plugins: {
-            legend: { position: 'bottom', labels: { padding: 15, usePointStyle: true } },
+            legend: {
+              position: 'bottom',
+              labels: { padding: 12, usePointStyle: true, font: { size: 12 }, boxWidth: 12 },
+            },
             tooltip: {
+              titleFont: { size: 13 },
+              bodyFont: { size: 13 },
               callbacks: {
-                label: (ctx) => `${ctx.label}: ${FormatMoney(ctx.raw)}`
+                label: (ctx) => ` ${FormatMoney(ctx.raw)} (${[pctVentas, pctDev, pctCam][ctx.dataIndex]}%)`
               }
             }
           },
@@ -2728,17 +3184,15 @@ async function RenderCharts(desde, hasta, guidSucursal, totalVentas, totalDev, t
           afterDraw(chart) {
             const { ctx: c, width, height } = chart;
             c.save();
-            const pctTotal = ((totalDevCam / divisor) * 100).toFixed(1);
-            c.font = 'bold 20px Segoe UI';
-            c.fillStyle = totalDevCam > 0 ? '#dc3545' : '#198754';
             c.textAlign = 'center';
             c.textBaseline = 'middle';
-            c.fillText(`${pctTotal}%`, width / 2, height / 2 - 16);
-            c.font = '11px Segoe UI';
-            c.fillStyle = '#dc3545';
-            c.fillText(`Dev: ${pctDev}%`, width / 2, height / 2 + 4);
-            c.fillStyle = '#fd7e14';
-            c.fillText(`Cam: ${pctCam}%`, width / 2, height / 2 + 18);
+            // Neto en el centro
+            c.font = 'bold 14px Segoe UI';
+            c.fillStyle = '#6c757d';
+            c.fillText('Neto', width / 2, height / 2 - 18);
+            c.font = 'bold 18px Segoe UI';
+            c.fillStyle = ventasNetas > 0 ? '#198754' : '#dc3545';
+            c.fillText(FormatMoney(ventasNetas), width / 2, height / 2 + 4);
             c.restore();
           }
         }],
@@ -3416,7 +3870,7 @@ async function AplicarCreditoDesdeQR(guidDevolucion) {
           el.innerHTML = `
             <span class="badge bg-primary badge-lg me-2"><i class="bi bi-person-fill me-1"></i>${(POS.cliente.NOMBRE || '').trim()}</span>
             <small class="text-muted">CUIT: ${(POS.cliente.CUIT || '').trim()} | Saldo: ${FormatMoney(POS.cliente.SALDO)}</small>
-            <button class="btn btn-sm btn-outline-danger ms-2" onclick="POS.cliente = null; document.getElementById('posClienteInfo').innerHTML = '<em class=\\'text-muted\\'>Consumidor Final</em>';">
+            <button class="btn btn-sm btn-outline-danger ms-2" onclick="LimpiarClientePOS()">
               <i class="bi bi-x"></i>
             </button>
           `;
@@ -3439,16 +3893,230 @@ async function AplicarCreditoDesdeQR(guidDevolucion) {
   }
 }
 
-// ── Aplicar crédito de devolución automáticamente desde el banner ──
+// ── Limpiar cliente del POS y banners asociados ──
+function LimpiarClientePOS() {
+  POS.cliente = null;
+  POS._creditosDisponibles = null;
+  POS._autoAplicarCredito = false;
+  document.getElementById('posClienteInfo').innerHTML = '<em class="text-muted">Consumidor Final</em>';
+  const aviso = document.getElementById('posCreditoAviso');
+  if (aviso) aviso.innerHTML = '';
+  // Resetear recargo si fue aplicado por crédito y recalcular a precios base
+  POS._interes = 0;
+  POS._coeficiente = 0;
+  POS._recargoCredito = false;
+  const divInfo = document.getElementById('posRecargoInfo');
+  if (divInfo) { divInfo.classList.add('d-none'); divInfo.innerHTML = ''; }
+  if (POS.items.length > 0) POS.RecalcularPrecios();
+  ToggleTitularTarjeta();
+}
+
+// ── Notificación proactiva de créditos al seleccionar cliente en POS ──
+async function NotificarCreditoCliente() {
+  const el = document.getElementById('posCreditoAviso');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!POS.cliente) return;
+
+  try {
+    const creditos = await API.GetCreditosCliente(POS.cliente.GUID.trim());
+    const activos = creditos.filter(c => (c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO)) > 0.01);
+    if (activos.length === 0) return;
+
+    const totalCredito = activos.reduce((s, c) => s + (c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO)), 0);
+    POS._creditosDisponibles = activos;
+
+    // Info del medio de pago original del primer crédito
+    const primerCredito = activos[0];
+    const tieneRecargo = (primerCredito.OrigenCoeficiente && primerCredito.OrigenCoeficiente !== 0 && primerCredito.OrigenCoeficiente !== 1)
+      || (primerCredito.OrigenInteres && primerCredito.OrigenInteres > 0);
+    let infoRecargo = '';
+    if (tieneRecargo) {
+      const tipoPagoOrig = primerCredito.OrigenTipoPago || '';
+      infoRecargo = `<br><small class="text-muted"><i class="bi bi-credit-card me-1"></i>Medio de pago original: <strong>${tipoPagoOrig}</strong> — se aplicara el mismo recargo</small>`;
+    }
+
+    el.innerHTML = `
+      <div class="alert alert-success border-success py-2 px-3 mb-2 d-flex align-items-center justify-content-between fade-in">
+        <div>
+          <i class="bi bi-gift-fill me-2"></i>
+          <strong>${(POS.cliente.NOMBRE || '').trim()}</strong> tiene credito disponible:
+          <span class="fw-bold fs-5 ms-1">${FormatMoney(totalCredito)}</span>
+          <small class="text-muted ms-2">(${activos.length} ${activos.length === 1 ? 'credito' : 'creditos'})</small>
+          ${infoRecargo}
+        </div>
+        <button class="btn btn-sm btn-success" onclick="AplicarCreditoPOSAutomatico()">
+          <i class="bi bi-plus-circle me-1"></i>Aplicar credito
+        </button>
+      </div>
+    `;
+  } catch (_) {}
+}
+
+// ── Aplicar recargo del medio de pago original del crédito a los items del POS ──
+// Retorna true si se aplicó recargo, false si no había
+async function _aplicarRecargoCredito() {
+  // Si ya tenemos los créditos cargados, usarlos; si no, cargarlos
+  let creditos = POS._creditosDisponibles;
+  if ((!creditos || creditos.length === 0) && POS.cliente) {
+    try {
+      creditos = await API.GetCreditosCliente(POS.cliente.GUID.trim());
+      creditos = creditos.filter(c => (c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO)) > 0.01);
+      POS._creditosDisponibles = creditos;
+    } catch (_) { return false; }
+  }
+  if (!creditos || creditos.length === 0) return false;
+
+  const c = creditos[0];
+  const coef = c.OrigenCoeficiente || 0;
+  const inter = c.OrigenInteres || 0;
+  const tieneRecargo = (coef && coef !== 0 && coef !== 1) || (inter && inter > 0);
+
+  if (tieneRecargo) {
+    POS._interes = inter;
+    POS._coeficiente = coef;
+    POS._recargoCredito = true;
+
+    // Intentar seleccionar el tipo de pago que coincida con el original
+    const tipoPagoOrig = (c.OrigenTipoPago || '').trim();
+    if (tipoPagoOrig) {
+      _seleccionarTipoPagoPorNombre(tipoPagoOrig);
+    }
+
+    // Recalcular precios con el recargo original
+    POS.RecalcularPrecios();
+
+    // Mostrar badge de recargo en POS
+    const divInfo = document.getElementById('posRecargoInfo');
+    if (divInfo) {
+      divInfo.classList.remove('d-none');
+      divInfo.innerHTML = `<span class="badge text-bg-warning fs-6"><i class="bi bi-percent me-1"></i>Recargo (credito): ${inter}% | Coef: ${coef}</span>`;
+    }
+  }
+  return tieneRecargo;
+}
+
+// ── Aplicar crédito desde el banner del POS: aplica recargo original a los precios ──
+async function AplicarCreditoPOSAutomatico() {
+  // Aplicar recargo del medio de pago original y recalcular precios
+  const aplicado = await _aplicarRecargoCredito();
+  if (aplicado) {
+    ShowToast('Credito aplicado', 'Se aplicaron los recargos del medio de pago original a los precios', 'success');
+  } else {
+    ShowToast('Credito aplicado', 'El credito se aplicara al momento de cobrar', 'info');
+  }
+  // Marcar para auto-seleccionar crédito cuando se abra el modal de pagos
+  POS._autoAplicarCredito = true;
+}
+
+// Buscar tipo de pago en el selector del POS por nombre de comprobante original
+// Pobla comprobantes y planes sin recalcular precios (eso lo hace _aplicarRecargoCredito)
+function _seleccionarTipoPagoPorNombre(tipoPagoNombre) {
+  const selTipoPago = document.getElementById('posTipoPago');
+  if (!selTipoPago) return;
+
+  let compOrig = null;
+  let bestLen = 0;
+  for (const tc of State.tcPagos) {
+    const nombre = (tc.TIPO_COMPROBANTE || '').trim();
+    if (nombre && tipoPagoNombre.startsWith(nombre) && nombre.length > bestLen) {
+      compOrig = tc;
+      bestLen = nombre.length;
+    }
+  }
+  if (!compOrig) return;
+
+  const tipoCobro = State.tiposCobrosPagos.find(t => t.TIPO === compOrig.TIPO);
+  if (!tipoCobro || !selTipoPago.querySelector(`option[value="${tipoCobro.GUID.trim()}"]`)) return;
+  selTipoPago.value = tipoCobro.GUID.trim();
+
+  // Poblar comprobantes del tipo seleccionado
+  const tipoNum = tipoCobro.TIPO;
+  const divComp = document.getElementById('posCompDiv');
+  const selComp = document.getElementById('posComprobante');
+  const comprobantes = State.tcPagos.filter(t => t.TIPO === tipoNum);
+
+  if (comprobantes.length > 0) {
+    divComp.classList.remove('d-none');
+    selComp.innerHTML = comprobantes.length > 1 ? '<option value="">Seleccione...</option>' : '';
+    comprobantes.forEach(tc => {
+      const opt = document.createElement('option');
+      opt.value = tc.GUID.trim();
+      opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
+      selComp.appendChild(opt);
+    });
+    // Pre-seleccionar el comprobante que coincida con el original
+    if (compOrig) selComp.value = compOrig.GUID.trim();
+  } else {
+    divComp.classList.add('d-none');
+    selComp.innerHTML = '';
+  }
+
+  // Poblar planes del comprobante seleccionado
+  const divPlan = document.getElementById('posPlanDiv');
+  const selPlan = document.getElementById('posPlan');
+  if (compOrig && compOrig.CANTPLANES > 0) {
+    divPlan.classList.remove('d-none');
+    selPlan.innerHTML = '<option value="">Sin plan</option>';
+    API.GetTCPagosPlanes(compOrig.GUID.trim()).then(planes => {
+      planes.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ interes: p.INTERES, coeficiente: p.COEFICIENTE });
+        opt.textContent = `${(p.NOMBRECOMPROBANTEPAGO || '').trim()} - ${p.CUOTAS} cuotas`;
+        selPlan.appendChild(opt);
+      });
+    });
+  } else {
+    divPlan.classList.add('d-none');
+    selPlan.innerHTML = '';
+  }
+}
+
+// ── Aplicar crédito de devolución automáticamente (desde banner modal o POS) ──
 async function AplicarCreditoDevAutomatico() {
-  // Buscar el tipo de pago "CREDITO DEV" y seleccionarlo
-  const sel = document.getElementById('pagoTipo');
+  // Aplicar recargo del medio de pago original antes de agregar el crédito
+  await _aplicarRecargoCredito();
+
   const tipoCredDev = State.tiposCobrosPagos.find(t => t.TIPO === 9);
   if (!tipoCredDev) {
     ShowToast('Error', 'No se encontró el tipo de pago "Crédito Devolución" configurado', 'error');
     return;
   }
-  sel.value = tipoCredDev.GUID.trim();
+
+  // Cargar créditos y agregar directamente como pago (sin depender del selector)
+  let creditos = POS._creditosDisponibles;
+  if (!creditos || creditos.length === 0) {
+    if (!POS.cliente) return;
+    creditos = await API.GetCreditosCliente(POS.cliente.GUID.trim());
+    creditos = creditos.filter(c => (c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO)) > 0.01);
+    POS._creditosDisponibles = creditos;
+  }
+  if (creditos.length === 0) { ShowToast('Aviso', 'No hay créditos disponibles', 'info'); return; }
+
+  const c = creditos[0];
+  const disponible = c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO);
+  const total = POS.GetTotal();
+  const yaPagado = POS.GetTotalPagos();
+  const restante = total - yaPagado;
+  const importe = Math.min(disponible, restante);
+
+  // Agregar el pago de crédito directamente
+  POS.pagos.push({
+    tipo: tipoCredDev.GUID.trim(),
+    tipoNombre: (tipoCredDev.DESCRIPCION || '').trim(),
+    importe,
+    descripcion: `Credito Dev. (${FormatMoney(disponible)})`,
+    guidBanco: '',
+    guidBancosCuentas: '',
+    _esEfectivo: false,
+    _esCtaCte: false,
+    _esCreditoDev: true,
+    _esCheque3ro: false,
+    _esTarjeta: false,
+    guidCreditoDevolucion: c.GUID.trim(),
+  });
+
+  // Re-renderizar modal para mostrar el pago agregado y el restante actualizado
   await RenderPagosModal();
 }
 
@@ -3466,9 +4134,10 @@ async function LoadCreditosDevolucion(guidCliente) {
     creditos.forEach(c => {
       const disponible = c.MONTODISPONIBLE || (c.MONTOORIGINAL - c.MONTOUSADO);
       const fechaStr = c.FECHA ? new Date(c.FECHA).toLocaleDateString('es-AR') : '';
+      const origen = c.Origen === 'CAMBIO' ? 'Cambio' : 'Dev.';
       const opt = document.createElement('option');
       opt.value = JSON.stringify({ guid: c.GUID.trim(), disponible });
-      opt.textContent = `${fechaStr} - Disponible: ${FormatMoney(disponible)} (Original: ${FormatMoney(c.MONTOORIGINAL)})`;
+      opt.textContent = `${fechaStr} [${origen}] - Disponible: ${FormatMoney(disponible)} (Original: ${FormatMoney(c.MONTOORIGINAL)})`;
       sel.appendChild(opt);
     });
     // Auto-fill importe con disponible del primer credito
@@ -3484,146 +4153,172 @@ async function LoadCreditosDevolucion(guidCliente) {
   }
 }
 
-// ── Generar comprobante PDF de devolucion con QR ──
+// ── Generar comprobante PDF de credito (devolucion o cambio) con QR ──
+function _generarComprobanteCreditoPDF({ titulo, d, items, credito, itemsLabel }) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 15;
+  let y = 20;
+
+  // ── Header ──
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(titulo, pageW / 2, y, { align: 'center' });
+  y += 8;
+
+  if (d.NotaCreditoNumero) {
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Nota de Credito: ${(d.NotaCreditoNumero || '').trim()}`, pageW / 2, y, { align: 'center' });
+    y += 7;
+  }
+
+  doc.setDrawColor(0);
+  doc.line(margin, y, pageW - margin, y);
+  y += 7;
+
+  // ── Info general ──
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  const fechaStr = d.FECHA ? ClarionToDateStr(d.FECHA) : '';
+  const horaStr = d.HORA ? ClarionTimeToStr(d.HORA) : '';
+  doc.text(`Fecha: ${fechaStr}  ${horaStr}`, margin, y);
+  doc.text(`Sucursal: ${(d.Sucursal || '').trim()}`, pageW / 2, y);
+  y += 5;
+  doc.text(`Cliente: ${(d.ClienteNombre || d.NOMBRE || '').trim()}`, margin, y);
+  if (d.ClienteCuit) doc.text(`CUIT: ${(d.ClienteCuit || '').trim()}`, pageW / 2, y);
+  y += 5;
+  doc.text(`ID: ${(d.GUID || '').trim()}`, margin, y);
+  y += 7;
+
+  doc.line(margin, y, pageW - margin, y);
+  y += 5;
+
+  // ── Tabla items ──
+  doc.setFont('helvetica', 'bold');
+  if (itemsLabel) { doc.text(itemsLabel, margin, y); y += 5; }
+  doc.text('Codigo', margin, y);
+  doc.text('Descripcion', margin + 30, y);
+  doc.text('Talle', margin + 100, y);
+  doc.text('Cant.', margin + 118, y);
+  doc.text('P.Unit.', margin + 133, y);
+  doc.text('Subtotal', margin + 155, y);
+  y += 2;
+  doc.line(margin, y, pageW - margin, y);
+  y += 5;
+
+  doc.setFont('helvetica', 'normal');
+  items.forEach(item => {
+    if (y > 260) { doc.addPage(); y = 20; }
+    doc.text((item.ARTICULO || '').trim().substring(0, 15), margin, y);
+    doc.text((item.DESCRIPCION || '').trim().substring(0, 35), margin + 30, y);
+    doc.text(String(item.TALLE || 0), margin + 100, y);
+    doc.text(String(item.CANTIDAD || 0), margin + 118, y);
+    doc.text(FormatMoney(item.PRECIOUNITARIO || 0), margin + 133, y);
+    doc.text(FormatMoney(item.TOTAL || 0), margin + 155, y);
+    y += 5;
+  });
+
+  y += 3;
+  doc.line(margin, y, pageW - margin, y);
+  y += 7;
+
+  // ── Total / Credito ──
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  const disponible = credito
+    ? (credito.MONTODISPONIBLE || (credito.MONTOORIGINAL - credito.MONTOUSADO))
+    : 0;
+  if (credito) {
+    doc.text(`CREDITO A FAVOR: ${FormatMoney(disponible)}`, pageW - margin, y, { align: 'right' });
+  } else {
+    doc.text(`TOTAL: ${FormatMoney(d.TOTAL || 0)}`, pageW - margin, y, { align: 'right' });
+  }
+  y += 7;
+
+  if (credito) {
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Estado: ${credito.ESTADO}`, pageW - margin, y, { align: 'right' });
+    y += 10;
+  }
+
+  // ── Vigencia ──
+  const fechaEmision = d.FECHA ? ClarionToDate(d.FECHA) : new Date();
+  const fechaVencimiento = new Date(fechaEmision);
+  fechaVencimiento.setMonth(fechaVencimiento.getMonth() + 6);
+  const fechaVencStr = fechaVencimiento.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  doc.setDrawColor(200, 0, 0);
+  doc.setLineWidth(0.8);
+  doc.roundedRect(margin, y, pageW - margin * 2, 16, 2, 2, 'S');
+  doc.setLineWidth(0.2);
+  doc.setDrawColor(0);
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(200, 0, 0);
+  doc.text(`Valido por 6 (seis) MESES. (${fechaVencStr})`, pageW / 2, y + 10, { align: 'center' });
+  doc.setTextColor(0, 0, 0);
+  y += 22;
+
+  // ── QR Code ──
+  const qrData = JSON.stringify({
+    g: (d.GUID || '').trim(),
+    f: fechaStr,
+    h: horaStr,
+    m: credito ? disponible : (d.TOTAL || 0),
+    nc: d.NotaCreditoNumero ? (d.NotaCreditoNumero || '').trim() : undefined,
+    v: fechaVencStr,
+  });
+
+  const qr = qrcode(0, 'M');
+  qr.addData(qrData);
+  qr.make();
+  const qrSize = 40;
+  const qrX = (pageW - qrSize) / 2;
+  const qrImg = qr.createDataURL(4, 0);
+  doc.addImage(qrImg, 'PNG', qrX, y, qrSize, qrSize);
+  y += qrSize + 5;
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Escanee el QR para verificar este comprobante', pageW / 2, y, { align: 'center' });
+
+  // Abrir en nueva ventana
+  const pdfBlob = doc.output('blob');
+  const url = URL.createObjectURL(pdfBlob);
+  window.open(url, '_blank');
+}
+
 async function GenerarComprobantePDF(guidDevolucion) {
   try {
     const det = await API.GetDevolucionDetalle(guidDevolucion);
     if (!det.devolucion) { ShowToast('Error', 'No se encontro la devolucion', 'error'); return; }
-
-    const d = det.devolucion;
-    const items = det.items;
-    const credito = det.credito;
-
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    const pageW = doc.internal.pageSize.getWidth();
-    const margin = 15;
-    let y = 20;
-
-    // ── Header ──
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text('COMPROBANTE DE DEVOLUCION', pageW / 2, y, { align: 'center' });
-    y += 8;
-
-    if (d.NotaCreditoNumero) {
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`Nota de Credito: ${(d.NotaCreditoNumero || '').trim()}`, pageW / 2, y, { align: 'center' });
-      y += 7;
-    }
-
-    doc.setDrawColor(0);
-    doc.line(margin, y, pageW - margin, y);
-    y += 7;
-
-    // ── Info general ──
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    const fechaDev = d.FECHA ? ClarionToDateStr(d.FECHA) : '';
-    const horaDev = d.HORA ? ClarionTimeToStr(d.HORA) : '';
-    doc.text(`Fecha: ${fechaDev}  ${horaDev}`, margin, y);
-    doc.text(`Sucursal: ${(d.Sucursal || '').trim()}`, pageW / 2, y);
-    y += 5;
-    doc.text(`Cliente: ${(d.ClienteNombre || d.NOMBRE || '').trim()}`, margin, y);
-    if (d.ClienteCuit) doc.text(`CUIT: ${(d.ClienteCuit || '').trim()}`, pageW / 2, y);
-    y += 5;
-    doc.text(`ID: ${(d.GUID || '').trim()}`, margin, y);
-    y += 7;
-
-    doc.line(margin, y, pageW - margin, y);
-    y += 5;
-
-    // ── Tabla items ──
-    doc.setFont('helvetica', 'bold');
-    doc.text('Codigo', margin, y);
-    doc.text('Descripcion', margin + 30, y);
-    doc.text('Talle', margin + 100, y);
-    doc.text('Cant.', margin + 118, y);
-    doc.text('P.Unit.', margin + 133, y);
-    doc.text('Subtotal', margin + 155, y);
-    y += 2;
-    doc.line(margin, y, pageW - margin, y);
-    y += 5;
-
-    doc.setFont('helvetica', 'normal');
-    items.forEach(item => {
-      if (y > 260) { doc.addPage(); y = 20; }
-      doc.text((item.ARTICULO || '').trim().substring(0, 15), margin, y);
-      doc.text((item.DESCRIPCION || '').trim().substring(0, 35), margin + 30, y);
-      doc.text(String(item.TALLE || 0), margin + 100, y);
-      doc.text(String(item.CANTIDAD || 0), margin + 118, y);
-      doc.text(FormatMoney(item.PRECIOUNITARIO || 0), margin + 133, y);
-      doc.text(FormatMoney(item.TOTAL || 0), margin + 155, y);
-      y += 5;
+    _generarComprobanteCreditoPDF({
+      titulo: 'COMPROBANTE DE DEVOLUCION',
+      d: det.devolucion,
+      items: det.items,
+      credito: det.credito,
     });
+  } catch (err) {
+    ShowToast('Error', 'No se pudo generar el comprobante: ' + err.message, 'error');
+  }
+}
 
-    y += 3;
-    doc.line(margin, y, pageW - margin, y);
-    y += 7;
-
-    // ── Total ──
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`TOTAL: ${FormatMoney(d.TOTAL || 0)}`, pageW - margin, y, { align: 'right' });
-    y += 7;
-
-    if (credito) {
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      const disponible = credito.MONTODISPONIBLE || (credito.MONTOORIGINAL - credito.MONTOUSADO);
-      doc.text(`Credito disponible: ${FormatMoney(disponible)}`, pageW - margin, y, { align: 'right' });
-      y += 5;
-      doc.text(`Estado: ${credito.ESTADO}`, pageW - margin, y, { align: 'right' });
-      y += 10;
-    }
-
-    // ── Vigencia ──
-    const fechaEmision = d.FECHA ? ClarionToDate(d.FECHA) : new Date();
-    const fechaVencimiento = new Date(fechaEmision);
-    fechaVencimiento.setMonth(fechaVencimiento.getMonth() + 6);
-    const fechaVencStr = fechaVencimiento.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-
-    doc.setDrawColor(200, 0, 0);
-    doc.setLineWidth(0.8);
-    doc.roundedRect(margin, y, pageW - margin * 2, 16, 2, 2, 'S');
-    doc.setLineWidth(0.2);
-    doc.setDrawColor(0);
-
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(200, 0, 0);
-    doc.text(`Valido por 6 (seis) MESES. (${fechaVencStr})`, pageW / 2, y + 10, { align: 'center' });
-    doc.setTextColor(0, 0, 0);
-    y += 22;
-
-    // ── QR Code ──
-    const qrData = JSON.stringify({
-      g: (d.GUID || '').trim(),
-      f: fechaDev,
-      h: horaDev,
-      m: d.TOTAL || 0,
-      nc: d.NotaCreditoNumero ? (d.NotaCreditoNumero || '').trim() : undefined,
-      v: fechaVencStr,
+async function GenerarComprobanteCambioPDF(guidCambio) {
+  try {
+    const det = await API.GetCambioDetalle(guidCambio);
+    if (!det.cambio) { ShowToast('Error', 'No se encontro el cambio', 'error'); return; }
+    if (!det.credito) return;
+    _generarComprobanteCreditoPDF({
+      titulo: 'COMPROBANTE DE CREDITO POR CAMBIO',
+      d: det.cambio,
+      items: det.items,
+      credito: det.credito,
+      itemsLabel: 'Articulos devueltos en cambio:',
     });
-
-    const qr = qrcode(0, 'M');
-    qr.addData(qrData);
-    qr.make();
-    const qrSize = 40;
-    const qrX = (pageW - qrSize) / 2;
-    const qrImg = qr.createDataURL(4, 0);
-    doc.addImage(qrImg, 'PNG', qrX, y, qrSize, qrSize);
-    y += qrSize + 5;
-
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Escanee el QR para verificar este comprobante', pageW / 2, y, { align: 'center' });
-
-    // Abrir en nueva ventana
-    const pdfBlob = doc.output('blob');
-    const url = URL.createObjectURL(pdfBlob);
-    window.open(url, '_blank');
   } catch (err) {
     ShowToast('Error', 'No se pudo generar el comprobante: ' + err.message, 'error');
   }
@@ -3840,6 +4535,8 @@ async function VerDetalleCambio(guid, rowId) {
   }
 }
 
+let _cambioVentaData = null;
+
 async function SeleccionarVentaCambio(guid) {
   try {
     _devCambioCliente = null;
@@ -3850,6 +4547,15 @@ async function SeleccionarVentaCambio(guid) {
       ShowToast('Aviso', 'Este remito ya fue devuelto/cambiado en su totalidad', 'info');
       return;
     }
+    // Guardar datos completos en variable (evitar pasar JSON por onclick)
+    _cambioVentaData = {
+      guid,
+      items: itemsDisponibles,
+      pagos: det.pagos || [],
+      totalRemito: r.TOTAL || 0,
+      guidCliente: (r.GUIDCLIENTES || '').trim(),
+      nombre: (r.NOMBRE || '').trim(),
+    };
     const esCF = EsConsumidorFinal(r.NOMBRE, r.GUIDCLIENTES);
     const clienteActualCamb = !esCF ? { nombre: (r.NOMBRE || '').trim(), guid: (r.GUIDCLIENTES || '').trim() } : null;
     const form = document.getElementById('cambFormulario');
@@ -3892,7 +4598,7 @@ async function SeleccionarVentaCambio(guid) {
               `).join('')}
             </tbody>
           </table>
-          <button class="btn btn-warning" onclick="PrepararCambioParaPOS('${guid}', ${JSON.stringify(itemsDisponibles).replace(/"/g, '&quot;')}, '${(r.GUIDCLIENTES || '').trim()}', '${(r.NOMBRE || '').trim().replace(/'/g, "\\'")}')">
+          <button class="btn btn-warning" onclick="EjecutarPrepararCambio()">
             <i class="bi bi-cart-plus me-1"></i>Cargar Nueva Mercaderia
           </button>
         </div>
@@ -3908,11 +4614,17 @@ async function SeleccionarVentaCambio(guid) {
   }
 }
 
+function EjecutarPrepararCambio() {
+  if (!_cambioVentaData) return;
+  const d = _cambioVentaData;
+  PrepararCambioParaPOS(d.guid, d.items, d.guidCliente, d.nombre, d.pagos, d.totalRemito);
+}
+
 function ToggleAllCambio(checked) {
   document.querySelectorAll('.cambCheck').forEach(cb => { cb.checked = checked; });
 }
 
-function PrepararCambioParaPOS(guidRemitoOriginal, originalItems, guidCliente, nombre) {
+async function PrepararCambioParaPOS(guidRemitoOriginal, originalItems, guidCliente, nombre, pagosOriginal, totalRemito) {
   // Los cambios SIEMPRE requieren cliente (queda en CTA CTE)
   if (_devCambioCliente) {
     guidCliente = _devCambioCliente.GUID;
@@ -3974,6 +4686,67 @@ function PrepararCambioParaPOS(guidRemitoOriginal, originalItems, guidCliente, n
     totalCambio += item.cantidad * item.precioUnitario;
   }
 
+  // Obtener interés/coeficiente del medio de pago original
+  let interesCambio = 0;
+  let coeficienteCambio = 0;
+  let tipoPagoCambio = '';
+  let cuotasOriginal = 0;
+  if (pagosOriginal && pagosOriginal.length > 0) {
+    const pagoOrig = pagosOriginal[0];
+    interesCambio = pagoOrig.INTERES || 0;
+    const coefStr = (pagoOrig.COEFICIENTE || '').toString().trim();
+    coeficienteCambio = coefStr ? parseFloat(coefStr) || 0 : 0;
+    cuotasOriginal = pagoOrig.CUOTAS || 0;
+    tipoPagoCambio = (pagoOrig.TIPOCOMPROBANTE || pagoOrig.DESCRIPCION || '').trim();
+  }
+
+  // Si no hay coeficiente útil, deducirlo comparando total remito vs total pagos
+  // En ventas viejas, el remito tiene el total base y FormaPagos tiene el total con recargo
+  if ((!coeficienteCambio || coeficienteCambio === 0 || coeficienteCambio === 1) && !interesCambio) {
+    const totalPagosOrig = (pagosOriginal || []).reduce((s, p) => s + (p.IMPORTE || 0), 0);
+    if (totalRemito > 0 && totalPagosOrig > 0 && Math.abs(totalPagosOrig - totalRemito) > 1) {
+      // Hubo recargo: coeficiente = totalRemito / totalPagado
+      coeficienteCambio = Math.round((totalRemito / totalPagosOrig) * 10000) / 10000;
+    }
+  }
+
+  // Si aún no hay coeficiente, intentar buscarlo en TCPagos/Planes por nombre del comprobante
+  if ((!coeficienteCambio || coeficienteCambio === 0 || coeficienteCambio === 1) && !interesCambio && tipoPagoCambio) {
+    let compOrig = null;
+    let bestLen = 0;
+    for (const tc of State.tcPagos) {
+      const tcNombre = (tc.TIPO_COMPROBANTE || '').trim();
+      if (tcNombre && tipoPagoCambio.startsWith(tcNombre) && tcNombre.length > bestLen) {
+        compOrig = tc;
+        bestLen = tcNombre.length;
+      }
+    }
+    if (compOrig) {
+      if (compOrig.CANTPLANES > 0) {
+        try {
+          const planes = await API.GetTCPagosPlanes(compOrig.GUID.trim());
+          if (planes.length > 0) {
+            let planMatch = null;
+            if (cuotasOriginal > 0) planMatch = planes.find(p => p.CUOTAS === cuotasOriginal);
+            if (!planMatch && planes.length === 1) planMatch = planes[0];
+            if (planMatch) {
+              coeficienteCambio = planMatch.COEFICIENTE || 0;
+              if (!interesCambio) interesCambio = planMatch.INTERES || 0;
+            }
+          }
+        } catch (_) {}
+      }
+      if (!coeficienteCambio || coeficienteCambio === 0 || coeficienteCambio === 1) {
+        if (compOrig.COEFICIENTE && compOrig.COEFICIENTE !== 0 && compOrig.COEFICIENTE !== 1) {
+          coeficienteCambio = compOrig.COEFICIENTE;
+        }
+      }
+      if (!interesCambio && compOrig.INTERES) {
+        interesCambio = compOrig.INTERES;
+      }
+    }
+  }
+
   // Guardar datos del cambio en POS (NO se graba nada en DB todavia)
   POS._cambioData = {
     guidRemitoOriginal,
@@ -3983,32 +4756,82 @@ function PrepararCambioParaPOS(guidRemitoOriginal, originalItems, guidCliente, n
     tipoCambio,
     itemsCambio,
     totalCambio,
+    interes: interesCambio,
+    coeficiente: coeficienteCambio,
+    tipoPago: tipoPagoCambio,
   };
 
   // Navegar al POS
   App.Navigate('pos');
 
-  // Mostrar alerta indicando modo cambio
+  // Mostrar alerta indicando modo cambio (tipo de pago ya se seleccionó en RenderPOS)
   setTimeout(() => {
     const main = document.getElementById('mainContent');
     const alertDiv = document.createElement('div');
     alertDiv.id = 'cambioAlert';
     alertDiv.className = 'alert alert-warning fade show mb-3';
+    let infoMedioPago = '';
+    if (tipoPagoCambio) {
+      infoMedioPago = ` | Medio de pago original: <strong>${tipoPagoCambio}</strong>`;
+      if (interesCambio > 0) infoMedioPago += ` (Int: ${interesCambio}%)`;
+      if (coeficienteCambio > 0 && coeficienteCambio !== 1) infoMedioPago += ` (Coef: ${coeficienteCambio})`;
+    }
     alertDiv.innerHTML = `
       <i class="bi bi-arrow-repeat me-2"></i>
       <strong>Modo Cambio:</strong> Cargue los nuevos articulos para el cambio.
-      Credito del cambio: <strong>${FormatMoney(totalCambio)}</strong>.
+      Credito del cambio: <strong>${FormatMoney(totalCambio)}</strong>.${infoMedioPago}
       Si el monto de la nueva venta supera el credito, se cobrara la diferencia.
       <button class="btn btn-sm btn-outline-danger ms-3" onclick="CancelarModoCambio()"><i class="bi bi-x-circle me-1"></i>Cancelar cambio</button>
     `;
     main.insertBefore(alertDiv, main.firstChild);
+
+    // Si hay recargo original, ocultar comprobante y plan del POS (ya fijados)
+    const hayRecargo = (coeficienteCambio > 0 && coeficienteCambio !== 1) || interesCambio > 0;
+    if (hayRecargo) {
+      const posCompDiv = document.getElementById('posCompDiv');
+      if (posCompDiv) posCompDiv.classList.add('d-none');
+      const posPlanDiv = document.getElementById('posPlanDiv');
+      if (posPlanDiv) posPlanDiv.classList.add('d-none');
+      const divInfo = document.getElementById('posRecargoInfo');
+      if (divInfo) {
+        divInfo.classList.remove('d-none');
+        divInfo.innerHTML = `<span class="badge text-bg-warning fs-6"><i class="bi bi-percent me-1"></i>Recargo venta original: ${interesCambio}% | Coef: ${coeficienteCambio}</span>`;
+      }
+    }
+
+    // Cargar cliente del cambio en el POS
+    if (guidCliente && guidCliente.trim()) {
+      API.GetClienteByGuid(guidCliente.trim()).then(cli => {
+        if (cli) {
+          POS.cliente = cli;
+          const infoDiv = document.getElementById('posClienteInfo');
+          if (infoDiv) {
+            infoDiv.innerHTML = `
+              <span class="badge text-bg-success fs-6"><i class="bi bi-person-check me-1"></i>${(cli.NOMBRE || '').trim()}</span>
+            `;
+          }
+        }
+      }).catch(() => {});
+    }
   }, 100);
 }
 
 function CancelarModoCambio() {
   delete POS._cambioData;
+  POS._interes = 0;
+  POS._coeficiente = 0;
   const alert = document.getElementById('cambioAlert');
   if (alert) alert.remove();
+  POS.RecalcularPrecios();
+  // Rehabilitar selector de tipo de pago y resetear a EFECTIVO
+  const posTipoPago = document.getElementById('posTipoPago');
+  if (posTipoPago) {
+    posTipoPago.disabled = false;
+    posTipoPago.title = '';
+    const efectivoOpt = State.tiposCobrosPagos.find(t => (t.DESCRIPCION || '').trim().toUpperCase() === 'EFECTIVO');
+    if (efectivoOpt) posTipoPago.value = efectivoOpt.GUID.trim();
+    POS.CambiarTipoPago();
+  }
   ShowToast('Cambio cancelado', 'Se cancelo el modo cambio', 'info');
 }
 
@@ -4082,6 +4905,7 @@ async function ConfirmarCambioConVenta() {
       guidSucursal: State.sucursalActual,
       guidVendedor: POS.vendedor,
       guidUsuario: (State.usuario && State.usuario.GUID) || '',
+      nombreUsuario: (State.usuario && State.usuario.NOMBRE) || '',
       nombre: cambio.nombre,
       motivo: cambio.motivo,
       tipoCambio: cambio.tipoCambio,
@@ -4101,7 +4925,7 @@ async function ConfirmarCambioConVenta() {
     delete POS._cambioData;
     _devCambioCliente = null;
     const msgDif = result.diferencia > 0 ? ` | Diferencia cobrada: ${FormatMoney(result.diferencia)}` : '';
-    const msgFavor = result.saldoAFavor > 0 ? ` | Saldo a favor: ${FormatMoney(result.saldoAFavor)}` : '';
+    const msgFavor = result.saldoAFavor > 0 ? ` | Credito generado: ${FormatMoney(result.saldoAFavor)}` : '';
     const msgFac = result.factura ? ` | Factura: ${result.factura}` : '';
     const msgNC = result.notaCredito ? ` | NC: ${result.notaCredito}` : '';
     ShowToast('Cambio exitoso',
@@ -4109,6 +4933,11 @@ async function ConfirmarCambioConVenta() {
       'success');
     POS.Reset();
     RenderPOS(document.getElementById('mainContent'));
+
+    // Si se generó crédito, ofrecer generar comprobante PDF con QR
+    if (result.guidCredito && result.guidCambio) {
+      GenerarComprobanteCambioPDF(result.guidCambio);
+    }
 
     // Mostrar NC si se emitió, o factura de la venta nueva
     if (result.guidNotaCredito) {
@@ -4121,6 +4950,311 @@ async function ConfirmarCambioConVenta() {
   } finally {
     btnCobrar.disabled = false;
     btnCobrar.innerHTML = '<i class="bi bi-cash-stack me-2"></i>Cobrar';
+  }
+}
+
+// ============================================================================
+// SECCIÓN: Artículos CRUD
+// ============================================================================
+let _artPage = 1, _artSearch = '', _artSortBy = 'DESCRIPCION', _artSortDir = 'ASC', _artSearchTimer = null;
+
+function RenderArticulosCRUD(container) {
+  _artPage = 1; _artSearch = '';
+  container.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h4 class="mb-0"><i class="bi bi-box-seam me-2"></i>Articulos</h4>
+      <button class="btn btn-primary" onclick="MostrarFormArticulo()"><i class="bi bi-plus-lg me-1"></i>Nuevo Articulo</button>
+    </div>
+    <div class="card shadow-sm mb-3">
+      <div class="card-body py-2">
+        <input type="text" id="artSearch" class="form-control" placeholder="Buscar por codigo o descripcion..." oninput="_artSearchDebounce()">
+      </div>
+    </div>
+    <div id="artResultados"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
+  `;
+  CargarArticulosCRUD();
+}
+
+function _artSearchDebounce() {
+  clearTimeout(_artSearchTimer);
+  _artSearchTimer = setTimeout(() => { _artPage = 1; CargarArticulosCRUD(); }, 300);
+}
+
+async function CargarArticulosCRUD(page) {
+  if (page) _artPage = page;
+  const search = (document.getElementById('artSearch')?.value || '').trim();
+  const div = document.getElementById('artResultados');
+
+  try {
+    const pageSize = Math.max(15, Math.floor((window.innerHeight - 320) / 38));
+    const resp = await API.GetArticulos(search || undefined, _artPage, pageSize, _artSortBy, _artSortDir);
+    const arts = resp.data;
+    const pag = resp.pagination;
+
+    if (arts.length === 0) {
+      div.innerHTML = '<div class="alert alert-info">No se encontraron articulos.</div>';
+      return;
+    }
+
+    const paginacion = pag.totalPages > 1 ? `
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <small class="text-muted">Mostrando ${(pag.page-1)*pag.limit+1}-${Math.min(pag.page*pag.limit, pag.total)} de ${pag.total}</small>
+        <nav><ul class="pagination pagination-sm mb-0">
+          <li class="page-item ${pag.page<=1?'disabled':''}"><a class="page-link" href="#" onclick="CargarArticulosCRUD(${pag.page-1});return false">&laquo;</a></li>
+          ${Array.from({length:pag.totalPages},(_,i)=>i+1).filter(p=>p===1||p===pag.totalPages||Math.abs(p-pag.page)<=2).map(p=>
+            `<li class="page-item ${p===pag.page?'active':''}"><a class="page-link" href="#" onclick="CargarArticulosCRUD(${p});return false">${p}</a></li>`
+          ).join('')}
+          <li class="page-item ${pag.page>=pag.totalPages?'disabled':''}"><a class="page-link" href="#" onclick="CargarArticulosCRUD(${pag.page+1});return false">&raquo;</a></li>
+        </ul></nav>
+      </div>` : '';
+
+    const thSort = (col, label) => {
+      const active = _artSortBy === col;
+      const icon = active ? (_artSortDir === 'ASC' ? 'bi-sort-up' : 'bi-sort-down') : 'bi-arrow-down-up opacity-25';
+      return `<th class="sortable" onclick="_artSort('${col}')" style="cursor:pointer">${label} <i class="bi ${icon} ms-1"></i></th>`;
+    };
+
+    div.innerHTML = `
+      <div class="table-responsive">
+        <table class="table table-sm table-hover no-sort-table">
+          <thead class="table-light">
+            <tr>
+              ${thSort('CODIGOARTICULOREL', 'Codigo')}
+              ${thSort('DESCRIPCION', 'Descripcion')}
+              <th>Proveedor</th>
+              <th>Color</th>
+              <th>Talles</th>
+              ${thSort('PRECIOCOSTO', 'P.Costo')}
+              ${thSort('PRECIOVENTA', 'P.Venta')}
+              <th class="text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${arts.map(a => {
+              const guid = a.GUID.trim();
+              const codigo = (a.CODIGOARTICULOREL || a.CODIGOARTICULO || '').trim();
+              const desc = (a.DESCRIPCION || '').trim();
+              const prov = (a.ProveedorNombre || '').trim();
+              const color = (a.COLOR || '').trim();
+              const talles = (a.TALLEDESDE && a.TALLEHASTA) ? `${a.TALLEDESDE}-${a.TALLEHASTA}` : '';
+              return `<tr>
+                <td><code>${codigo}</code></td>
+                <td>${desc}</td>
+                <td><small class="text-muted">${prov}</small></td>
+                <td>${color}</td>
+                <td>${talles}</td>
+                <td class="text-end">${FormatMoney(a.PRECIOCOSTO || 0)}</td>
+                <td class="text-end fw-bold">${FormatMoney(a.PRECIOVENTA || 0)}</td>
+                <td class="text-center">
+                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarArticulo('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarArticulo('${guid}', '${desc.replace(/'/g,"\\'")}')"><i class="bi bi-trash"></i></button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${paginacion}
+    `;
+  } catch (err) {
+    div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+function _artSort(col) {
+  if (_artSortBy === col) _artSortDir = _artSortDir === 'ASC' ? 'DESC' : 'ASC';
+  else { _artSortBy = col; _artSortDir = 'ASC'; }
+  _artPage = 1;
+  CargarArticulosCRUD();
+}
+
+async function MostrarFormArticulo(guidEditar) {
+  let art = null, movs = [];
+  if (guidEditar) {
+    art = await API.GetArticuloByGuid(guidEditar);
+    movs = await API.GetMovimientoArticulos(guidEditar);
+  }
+
+  // Cargar proveedores para el dropdown
+  let proveedores = [];
+  try { proveedores = await API.GetProveedores(); } catch (_) {}
+
+  const isEdit = !!art;
+  const modal = document.getElementById('modalArticulo') || (() => {
+    const d = document.createElement('div');
+    d.id = 'modalArticulo';
+    d.className = 'modal fade';
+    d.tabIndex = -1;
+    d.innerHTML = `<div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white">
+      <h5 class="modal-title" id="artModalTitle"></h5>
+      <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+    </div><div class="modal-body" id="artModalBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+      <button class="btn btn-primary" id="btnGuardarArticulo"><i class="bi bi-check-lg me-1"></i>Guardar</button>
+    </div></div></div>`;
+    document.body.appendChild(d);
+    return d;
+  })();
+
+  document.getElementById('artModalTitle').textContent = isEdit ? 'Editar Articulo' : 'Nuevo Articulo';
+
+  const provOpts = proveedores.map(p => {
+    const sel = art && art.GUIDPROVEEDORES && p.GUID.trim() === art.GUIDPROVEEDORES.trim() ? 'selected' : '';
+    return `<option value="${p.GUID.trim()}" ${sel}>${(p.NOMBRE || '').trim()}</option>`;
+  }).join('');
+
+  const movsHtml = (movs || []).map((m, i) => `
+    <tr data-mov-guid="${m.GUID.trim()}">
+      <td><input type="number" class="form-control form-control-sm artMovNumero" value="${m.NUMERO || 0}" step="0.5"></td>
+      <td><input type="text" class="form-control form-control-sm artMovColor" value="${(m.COLOR || '').trim()}"></td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
+    </tr>
+  `).join('');
+
+  document.getElementById('artModalBody').innerHTML = `
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Codigo Articulo</label>
+        <input type="text" id="artCodigo" class="form-control" value="${isEdit ? (art.CODIGOARTICULO || '').trim() : ''}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Codigo Rel. (busqueda) *</label>
+        <input type="text" id="artCodigoRel" class="form-control" value="${isEdit ? (art.CODIGOARTICULOREL || '').trim() : ''}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Tipo</label>
+        <input type="text" id="artTipo" class="form-control" maxlength="2" value="${isEdit ? (art.TIPO || '').trim() : ''}">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Descripcion *</label>
+        <input type="text" id="artDescripcion" class="form-control" value="${isEdit ? (art.DESCRIPCION || '').trim() : ''}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Proveedor</label>
+        <select id="artProveedor" class="form-select">
+          <option value="">Sin proveedor</option>
+          ${provOpts}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Color</label>
+        <input type="text" id="artColor" class="form-control" value="${isEdit ? (art.COLOR || '').trim() : ''}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Precio Costo</label>
+        <input type="number" id="artPrecioCosto" class="form-control" step="0.01" value="${isEdit ? (art.PRECIOCOSTO || 0) : ''}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Precio Venta *</label>
+        <input type="number" id="artPrecioVenta" class="form-control" step="0.01" value="${isEdit ? (art.PRECIOVENTA || 0) : ''}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Costo USD</label>
+        <input type="number" id="artCostoDolar" class="form-control" step="0.01" value="${isEdit ? (art.CostoDolar || 0) : ''}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Venta USD</label>
+        <input type="number" id="artVentaDolar" class="form-control" step="0.01" value="${isEdit ? (art.VentaDolar || 0) : ''}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Talle Desde</label>
+        <input type="number" id="artTalleDesde" class="form-control" step="0.5" value="${isEdit ? (art.TALLEDESDE || '') : ''}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Talle Hasta</label>
+        <input type="number" id="artTalleHasta" class="form-control" step="0.5" value="${isEdit ? (art.TALLEHASTA || '') : ''}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Utilidad</label>
+        <input type="number" id="artUtilidad" class="form-control" step="0.01" value="${isEdit ? (art.UTILIDAD || 0) : ''}">
+      </div>
+    </div>
+    <hr>
+    <h6><i class="bi bi-grid-3x3 me-1"></i>Talles / Colores (variantes)</h6>
+    <table class="table table-sm" id="artMovsTable">
+      <thead><tr><th>Talle (numero)</th><th>Color</th><th></th></tr></thead>
+      <tbody id="artMovsBody">${movsHtml}</tbody>
+    </table>
+    <button class="btn btn-sm btn-outline-secondary" onclick="AgregarFilaMov()"><i class="bi bi-plus me-1"></i>Agregar variante</button>
+  `;
+
+  document.getElementById('btnGuardarArticulo').onclick = () => GuardarArticulo(isEdit ? guidEditar : null);
+  new bootstrap.Modal(modal).show();
+}
+
+function AgregarFilaMov() {
+  const tbody = document.getElementById('artMovsBody');
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-mov-guid', '');
+  tr.innerHTML = `
+    <td><input type="number" class="form-control form-control-sm artMovNumero" value="0" step="0.5"></td>
+    <td><input type="text" class="form-control form-control-sm artMovColor" value=""></td>
+    <td><button class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+async function GuardarArticulo(guidEditar) {
+  const descripcion = document.getElementById('artDescripcion').value.trim();
+  if (!descripcion) { ShowToast('Error', 'La descripcion es obligatoria', 'error'); return; }
+  const precioVenta = parseFloat(document.getElementById('artPrecioVenta').value) || 0;
+  if (precioVenta <= 0) { ShowToast('Error', 'El precio de venta debe ser mayor a 0', 'error'); return; }
+
+  // Recopilar movimientos del DOM
+  const movRows = document.querySelectorAll('#artMovsBody tr');
+  const movimientos = [];
+  movRows.forEach(tr => {
+    const numero = parseFloat(tr.querySelector('.artMovNumero').value) || 0;
+    const color = tr.querySelector('.artMovColor').value.trim();
+    const guid = tr.getAttribute('data-mov-guid') || '';
+    movimientos.push({ guid, numero, color });
+  });
+
+  const data = {
+    codigoArticulo: document.getElementById('artCodigo').value.trim(),
+    codigoArticuloRel: document.getElementById('artCodigoRel').value.trim(),
+    descripcion,
+    precioCosto: parseFloat(document.getElementById('artPrecioCosto').value) || 0,
+    precioVenta,
+    talleDesde: parseFloat(document.getElementById('artTalleDesde').value) || 0,
+    talleHasta: parseFloat(document.getElementById('artTalleHasta').value) || 0,
+    color: document.getElementById('artColor').value.trim(),
+    utilidad: parseFloat(document.getElementById('artUtilidad').value) || 0,
+    tipo: document.getElementById('artTipo').value.trim(),
+    guidProveedores: document.getElementById('artProveedor').value || '',
+    costoDolar: parseFloat(document.getElementById('artCostoDolar').value) || 0,
+    ventaDolar: parseFloat(document.getElementById('artVentaDolar').value) || 0,
+    movimientos,
+  };
+
+  try {
+    if (guidEditar) {
+      await API.UpdateArticulo(guidEditar, data);
+      ShowToast('Articulo actualizado', descripcion, 'success');
+    } else {
+      await API.CreateArticulo(data);
+      ShowToast('Articulo creado', descripcion, 'success');
+    }
+    bootstrap.Modal.getInstance(document.getElementById('modalArticulo')).hide();
+    CargarArticulosCRUD();
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
+}
+
+async function EditarArticulo(guid) {
+  await MostrarFormArticulo(guid);
+}
+
+async function EliminarArticulo(guid, nombre) {
+  if (!confirm(`¿Eliminar el articulo "${nombre}"?`)) return;
+  try {
+    await API.DeleteArticulo(guid);
+    ShowToast('Articulo eliminado', nombre, 'success');
+    CargarArticulosCRUD();
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
   }
 }
 
@@ -4148,7 +5282,8 @@ const Transferencia = {
         return;
       }
 
-      const resultados = await API.GetArticulos(texto);
+      const _trResp = await API.GetArticulos(texto);
+      const resultados = _trResp.data || _trResp;
       if (resultados.length === 0) {
         ShowToast('Aviso', 'No se encontraron articulos', 'info');
       } else if (resultados.length === 1) {
@@ -4824,7 +5959,8 @@ const Compra = {
         return;
       }
 
-      const resultados = await API.GetArticulos(texto);
+      const _cpResp = await API.GetArticulos(texto);
+      const resultados = _cpResp.data || _cpResp;
       if (resultados.length === 0) {
         ShowToast('Aviso', 'No se encontraron articulos', 'info');
       } else if (resultados.length === 1) {
@@ -5958,8 +7094,8 @@ async function BuscarCajaDiaria() {
         </div>`;
     }).join('');
 
-    // Tabla de movimientos
-    const filas = movimientos.map(m => {
+    // Tabla de movimientos con acordeón de detalle
+    const filas = movimientos.map((m, idx) => {
       const tipo = (m.TIPOCOMPROBANTE || '').trim();
       const desc = (m.DESCRIPCION || '').trim();
       const debe = m.DEBE || 0;
@@ -5971,9 +7107,11 @@ async function BuscarCajaDiaria() {
       const usuario = (m.Usuario || '').trim();
       const esEgreso = haber > 0;
       const badgeColor = esEgreso ? 'danger' : CajaDiariaBadge(tipo);
+      const guidRemito = (m.GUIDREMITOS || '').trim();
+      const tieneDetalle = !!guidRemito;
 
-      return `<tr>
-        <td class="small">${fecha}</td>
+      return `<tr class="${tieneDetalle ? 'cd-expandible' : ''}" ${tieneDetalle ? `onclick="VerDetalleVenta('${guidRemito}')" style="cursor:pointer" title="Ver detalle de la venta"` : ''}>
+        <td class="small">${tieneDetalle ? '<i class="bi bi-eye text-primary me-1"></i>' : ''}${fecha}</td>
         <td><span class="badge bg-${badgeColor}">${tipo}</span></td>
         <td class="small">${desc}</td>
         <td class="small">${tercero}</td>
@@ -6643,6 +7781,7 @@ async function LoadTCPagos() {
             <th>Nombre</th>
             <th>Abrev.</th>
             <th>N&ordm; Comercio</th>
+            <th>Cuenta Bancaria</th>
             <th class="text-end">Inter&eacute;s %</th>
             <th class="text-end">Coeficiente</th>
             <th class="text-end"></th>
@@ -6657,6 +7796,7 @@ async function LoadTCPagos() {
               <td>${(tc.TIPO_COMPROBANTE || '').trim()}</td>
               <td>${(tc.ABREVIADO || '').trim()}</td>
               <td>${(tc.NUMERO_COMERCIO || '').trim() || '-'}</td>
+              <td class="small">${(tc.CuentaBancaria || '').trim() ? `<i class="bi bi-bank me-1"></i>${(tc.BancoNombre || '').trim()} - ${(tc.CuentaBancaria || '').trim()}${(tc.TipoCuenta || '').trim() ? ' (' + (tc.TipoCuenta || '').trim() + ')' : ''}` : '-'}</td>
               <td class="text-end">${tc.INTERES || 0}</td>
               <td class="text-end">${tc.COEFICIENTE || 0}</td>
               <td class="text-end text-nowrap">
@@ -6666,7 +7806,7 @@ async function LoadTCPagos() {
               </td>
             </tr>
             <tr id="planesRow_${guid}" class="d-none">
-              <td colspan="7" class="bg-light p-0">
+              <td colspan="8" class="bg-light p-0">
                 <div class="p-3">
                   <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="fw-semibold mb-0"><i class="bi bi-list-ol me-1"></i>Planes de Cuotas</h6>
@@ -6731,7 +7871,22 @@ async function ShowFormTCPago(guid) {
   }
   let tiposCobrosPagos = [];
   try { tiposCobrosPagos = await API.GetTiposCobrosPagos(); } catch (_) {}
+  let bancosCuentas = [];
+  try { bancosCuentas = await API.GetBancosCuentas(); } catch (_) {}
   const guidTCP = (data.GUIDTIPOSCOBROSPAGOS || '').trim();
+  const guidBC = (data.GUIDBANCOSCUENTAS || '').trim();
+  // Determinar si el tipo actual requiere cuenta bancaria (Transferencia=4, Deposito=8)
+  const tipoActual = data.TIPO || 0;
+  const requiereCta = tipoActual === 4 || tipoActual === 8;
+
+  const ctaOpts = bancosCuentas.map(bc => {
+    const sel = bc.GUID.trim() === guidBC ? 'selected' : '';
+    const banco = (bc.NombreBanco || '').trim();
+    const num = (bc.NUMEROCUENTA || '').trim();
+    const tipo = (bc.TIPOCUENTA || '').trim();
+    return `<option value="${bc.GUID.trim()}" ${sel}>${banco} - ${num}${tipo ? ' (' + tipo + ')' : ''}</option>`;
+  }).join('');
+
   container.innerHTML = `
     <div class="card border-primary mb-3">
       <div class="card-body">
@@ -6739,7 +7894,7 @@ async function ShowFormTCPago(guid) {
         <div class="row g-2">
           <div class="col-md-3">
             <label class="form-label">Tipo Cobro/Pago <span class="text-danger">*</span></label>
-            <select class="form-select" id="tcTipoCobroPago">
+            <select class="form-select" id="tcTipoCobroPago" onchange="ToggleTCPagoCuentaBancaria()">
               <option value="">Seleccione...</option>
               ${tiposCobrosPagos.map(t => `<option value="${t.GUID.trim()}" data-tipo="${t.TIPO}" ${t.GUID.trim() === guidTCP ? 'selected' : ''}>${(t.DESCRIPCION || '').trim()}</option>`).join('')}
             </select>
@@ -6770,7 +7925,14 @@ async function ShowFormTCPago(guid) {
           </div>
         </div>
         <div class="row g-2 mt-1">
-          <div class="col-md-6">
+          <div class="col-md-3 ${requiereCta ? '' : 'd-none'}" id="tcCuentaBancariaDiv">
+            <label class="form-label"><i class="bi bi-bank me-1"></i>Cuenta Bancaria</label>
+            <select class="form-select" id="tcCuentaBancaria">
+              <option value="">Sin cuenta</option>
+              ${ctaOpts}
+            </select>
+          </div>
+          <div class="col-md-3">
             <label class="form-label">Observaciones</label>
             <input type="text" class="form-control" id="tcObservaciones" value="${(data.OBSERVACIONES || '').trim()}" maxlength="254">
           </div>
@@ -6782,6 +7944,14 @@ async function ShowFormTCPago(guid) {
       </div>
     </div>
   `;
+}
+
+function ToggleTCPagoCuentaBancaria() {
+  const sel = document.getElementById('tcTipoCobroPago');
+  const opt = sel.options[sel.selectedIndex];
+  const tipo = opt ? parseInt(opt.dataset.tipo) : 0;
+  const div = document.getElementById('tcCuentaBancariaDiv');
+  if (div) div.classList.toggle('d-none', tipo !== 4 && tipo !== 8);
 }
 
 async function GuardarTCPago(guid) {
@@ -6797,6 +7967,7 @@ async function GuardarTCPago(guid) {
     observaciones: document.getElementById('tcObservaciones').value.trim(),
     guidTiposCobrosPagos: selTipoCobroPago.value,
     tipo: selectedOption && selectedOption.dataset.tipo ? parseInt(selectedOption.dataset.tipo) : 0,
+    guidBancosCuentas: (document.getElementById('tcCuentaBancaria')?.value || '').trim(),
   };
   if (!payload.guidTiposCobrosPagos) { ShowToast('Error', 'Debe seleccionar un Tipo Cobro/Pago', 'error'); return; }
   if (!payload.tipoComprobante) { ShowToast('Error', 'El nombre es obligatorio', 'error'); return; }
@@ -7359,4 +8530,172 @@ async function EliminarUsuario(guid, nombre) {
     ShowToast('Usuario', 'Eliminado exitosamente', 'success');
     BuscarUsuarios();
   } catch (err) { ShowToast('Error', err.message, 'error'); }
+}
+
+// ============================================================================
+// AJUSTES (Configuración general)
+// ============================================================================
+async function RenderAjustes(container) {
+  let maxDesc = State.maxDescuento;
+  try {
+    const cfg = await API.GetMaxDescuento();
+    maxDesc = cfg.porcentaje;
+    State.maxDescuento = maxDesc;
+  } catch (e) { /* usar valor cacheado */ }
+
+  container.innerHTML = `
+    <div class="d-flex align-items-center mb-4">
+      <h4 class="mb-0"><i class="bi bi-gear me-2"></i>Ajustes</h4>
+    </div>
+
+    <div class="card shadow-sm" style="max-width:500px">
+      <div class="card-header bg-primary text-white">
+        <h6 class="mb-0"><i class="bi bi-percent me-2"></i>Descuento máximo en ventas</h6>
+      </div>
+      <div class="card-body">
+        <p class="text-muted mb-3">
+          Porcentaje máximo de descuento que se puede aplicar al modificar el precio de un artículo en el punto de venta.
+        </p>
+        <div class="input-group" style="max-width:250px">
+          <input type="number" class="form-control" id="inputMaxDescuento" value="${maxDesc}" min="0" max="100" step="0.5">
+          <span class="input-group-text">%</span>
+          <button class="btn btn-primary" id="btnGuardarDescuento" onclick="GuardarMaxDescuento()">
+            <i class="bi bi-check-lg me-1"></i>Guardar
+          </button>
+        </div>
+        <small class="text-muted mt-2 d-block">
+          Valor actual: <strong>${maxDesc}%</strong> — Si un vendedor intenta aplicar un descuento mayor, el sistema lo bloqueará.
+        </small>
+      </div>
+    </div>
+  `;
+}
+
+async function GuardarMaxDescuento() {
+  const input = document.getElementById('inputMaxDescuento');
+  const porcentaje = parseFloat(input.value);
+  if (isNaN(porcentaje) || porcentaje < 0 || porcentaje > 100) {
+    ShowToast('Error', 'El porcentaje debe estar entre 0 y 100', 'error');
+    return;
+  }
+  const btn = document.getElementById('btnGuardarDescuento');
+  btn.disabled = true;
+  try {
+    await API.SetMaxDescuento(porcentaje);
+    State.maxDescuento = porcentaje;
+    ShowToast('Ajustes', `Descuento máximo actualizado a ${porcentaje}%`, 'success');
+    RenderAjustes(document.getElementById('mainContent'));
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ============================================================================
+// AUDITORÍA DE PRECIOS
+// ============================================================================
+function RenderAuditoriaPrecios(container) {
+  container.innerHTML = `
+    <div class="d-flex align-items-center mb-4">
+      <h4 class="mb-0"><i class="bi bi-clock-history me-2"></i>Auditoría de Precios</h4>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-auto">
+            <label class="form-label mb-0">Desde</label>
+            <input type="date" id="audDesde" class="form-control" value="${Days30AgoISO()}">
+          </div>
+          <div class="col-auto">
+            <label class="form-label mb-0">Hasta</label>
+            <input type="date" id="audHasta" class="form-control" value="${TodayISO()}">
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-primary" onclick="BuscarAuditoriaPrecios()">
+              <i class="bi bi-search me-1"></i>Buscar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="auditoriaResultados">
+      <div class="text-center text-muted py-4">Seleccione un rango de fechas y presione Buscar</div>
+    </div>
+  `;
+}
+
+async function BuscarAuditoriaPrecios() {
+  const desde = document.getElementById('audDesde').value;
+  const hasta = document.getElementById('audHasta').value;
+  const div = document.getElementById('auditoriaResultados');
+  div.innerHTML = '<div class="text-center py-4"><div class="spinner-border"></div></div>';
+
+  try {
+    const registros = await API.GetAuditoriaPrecios({ desde, hasta });
+
+    if (registros.length === 0) {
+      div.innerHTML = `<div class="text-center text-muted py-4">
+        <i class="bi bi-check-circle fs-1 d-block mb-2 opacity-50"></i>Sin cambios de precio en el período seleccionado
+      </div>`;
+      return;
+    }
+
+    div.innerHTML = `
+      <div class="card shadow-sm">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-list-ul me-2"></i>${registros.length} registro${registros.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-striped table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Fecha</th>
+                <th>Hora</th>
+                <th>Código</th>
+                <th>Descripción</th>
+                <th class="text-end">Precio Base</th>
+                <th class="text-end">Precio s/Medio Pago</th>
+                <th class="text-end">Precio Modificado</th>
+                <th class="text-end">Diferencia</th>
+                <th class="text-end">%</th>
+                <th>Usuario</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${registros.map(r => {
+                const esBaja = r.Diferencia < 0;
+                const badgeClass = esBaja ? 'text-bg-danger' : 'text-bg-success';
+                const signo = esBaja ? '' : '+';
+                const precioMP = r.PrecioMedioPago || r.PrecioBase;
+                const tieneRecargo = precioMP !== r.PrecioBase;
+                return `
+                  <tr>
+                    <td>${FormatFechaInt(r.Fecha)}</td>
+                    <td>${FormatHoraInt(r.Hora)}</td>
+                    <td><code>${r.CodigoArticulo || '-'}</code></td>
+                    <td>${r.Descripcion || '-'}</td>
+                    <td class="text-end">${FormatMoney(r.PrecioBase)}</td>
+                    <td class="text-end${tieneRecargo ? ' text-primary fw-semibold' : ''}">${FormatMoney(precioMP)}</td>
+                    <td class="text-end fw-bold">${FormatMoney(r.PrecioModificado)}</td>
+                    <td class="text-end">
+                      <span class="badge ${badgeClass}">${signo}${FormatMoney(r.Diferencia)}</span>
+                    </td>
+                    <td class="text-end">
+                      <span class="badge ${badgeClass}">${signo}${r.DiferenciaPorcentaje.toFixed(1)}%</span>
+                    </td>
+                    <td>${r.NombreUsuario || '-'}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+  }
 }

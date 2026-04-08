@@ -10,12 +10,18 @@ async function GetAll() {
   const pool = await getPool();
   const result = await pool.request().query(`
     SELECT t.GUID, t.CODIGO_TCP, t.ABREVIADO, t.TIPO_COMPROBANTE, t.INTERES, t.COEFICIENTE,
-           t.NUMERO_COMERCIO, t.TIPO, t.DATOSADICIONAL, t.TELEFONO, t.OBSERVACIONES, t.GUIDTIPOSCOBROSPAGOS,
+           t.NUMERO_COMERCIO, t.TIPO, t.DATOSADICIONAL, t.TELEFONO, t.OBSERVACIONES,
+           t.GUIDTIPOSCOBROSPAGOS, t.GUIDBANCOSCUENTAS,
            ISNULL(tcp.DESCRIPCION, '') AS TIPOCOBROPAGODESCRIP,
            ISNULL(tcp.TIPOMOVIMIENTO, '') AS TIPOMOVIMIENTO,
+           ISNULL(RTRIM(bc.NUMEROCUENTA), '') AS CuentaBancaria,
+           ISNULL(RTRIM(bc.TIPOCUENTA), '') AS TipoCuenta,
+           ISNULL(RTRIM(b.NOMBRE), '') AS BancoNombre,
            (SELECT COUNT(*) FROM TCPagosPlanes p WHERE p.GUIDTIPOSCOMPROBANTESPAGOS = t.GUID AND (p.dts IS NULL OR p.dts = 0)) AS CANTPLANES
     FROM TiposComprobantesPagos t
     LEFT JOIN TiposCobrosPagos tcp ON tcp.GUID = t.GUIDTIPOSCOBROSPAGOS AND (tcp.dts IS NULL OR tcp.dts = 0)
+    LEFT JOIN BancosCuentas bc ON bc.GUID = t.GUIDBANCOSCUENTAS AND RTRIM(t.GUIDBANCOSCUENTAS) <> ''
+    LEFT JOIN Bancos b ON b.GUID = bc.GUIDBANCOS
     WHERE (t.dts IS NULL OR t.dts = 0)
     ORDER BY t.TIPO_COMPROBANTE
   `);
@@ -30,7 +36,7 @@ async function GetByGuid(guid) {
   return result.recordset[0] || null;
 }
 
-async function Create({ tipoComprobante, abreviado, interes, coeficiente, numeroComercio, telefono, observaciones, tipo, datosAdicional, guidTiposCobrosPagos }) {
+async function Create({ tipoComprobante, abreviado, interes, coeficiente, numeroComercio, telefono, observaciones, tipo, datosAdicional, guidTiposCobrosPagos, guidBancosCuentas }) {
   const pool = await getPool();
   const guid = newGuid();
   const ts = tsNow();
@@ -50,20 +56,21 @@ async function Create({ tipoComprobante, abreviado, interes, coeficiente, numero
     .input('datosAdicional', sql.TinyInt, datosAdicional || 0)
     .input('guidFormaPagos', sql.Char(16), EMPTY_GUID)
     .input('guidTiposCobrosPagos', sql.Char(16), guidTiposCobrosPagos || EMPTY_GUID)
+    .input('guidBancosCuentas', sql.Char(16), guidBancosCuentas || EMPTY_GUID)
     .input('ts', sql.Float, ts)
     .input('sts', sql.Float, ts)
     .query(`
       INSERT INTO TiposComprobantesPagos (GUID, CODIGO_TCP, TIPO_COMPROBANTE, ABREVIADO, INTERES, COEFICIENTE,
         NUMERO_COMERCIO, TELEFONO, OBSERVACIONES, TIPO, DATOSADICIONAL,
-        GUIDFORMAPAGOS, GUIDTIPOSCOBROSPAGOS, ts, sts)
+        GUIDFORMAPAGOS, GUIDTIPOSCOBROSPAGOS, GUIDBANCOSCUENTAS, ts, sts)
       VALUES (@guid, @codigoTcp, @tipoComprobante, @abreviado, @interes, @coeficiente,
         @numeroComercio, @telefono, @observaciones, @tipo, @datosAdicional,
-        @guidFormaPagos, @guidTiposCobrosPagos, @ts, @sts)
+        @guidFormaPagos, @guidTiposCobrosPagos, @guidBancosCuentas, @ts, @sts)
     `);
   return { guid, codigoTcp };
 }
 
-async function Update(guid, { tipoComprobante, abreviado, interes, coeficiente, numeroComercio, telefono, observaciones, tipo, datosAdicional, guidTiposCobrosPagos }) {
+async function Update(guid, { tipoComprobante, abreviado, interes, coeficiente, numeroComercio, telefono, observaciones, tipo, datosAdicional, guidTiposCobrosPagos, guidBancosCuentas }) {
   const pool = await getPool();
   const ts = tsNow();
   await pool.request()
@@ -78,13 +85,15 @@ async function Update(guid, { tipoComprobante, abreviado, interes, coeficiente, 
     .input('tipo', sql.TinyInt, tipo || 0)
     .input('datosAdicional', sql.TinyInt, datosAdicional || 0)
     .input('guidTiposCobrosPagos', sql.Char(16), guidTiposCobrosPagos || '')
+    .input('guidBancosCuentas', sql.Char(16), guidBancosCuentas || EMPTY_GUID)
     .input('sts', sql.Float, ts)
     .query(`
       UPDATE TiposComprobantesPagos
       SET TIPO_COMPROBANTE = @tipoComprobante, ABREVIADO = @abreviado,
           INTERES = @interes, COEFICIENTE = @coeficiente, NUMERO_COMERCIO = @numeroComercio,
           TELEFONO = @telefono, OBSERVACIONES = @observaciones, TIPO = @tipo,
-          DATOSADICIONAL = @datosAdicional, GUIDTIPOSCOBROSPAGOS = @guidTiposCobrosPagos, sts = @sts
+          DATOSADICIONAL = @datosAdicional, GUIDTIPOSCOBROSPAGOS = @guidTiposCobrosPagos,
+          GUIDBANCOSCUENTAS = @guidBancosCuentas, sts = @sts
       WHERE GUID = @guid
     `);
 }

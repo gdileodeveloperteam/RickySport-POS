@@ -28,6 +28,7 @@ async function GetCajaDiaria({ desde, hasta, guidSucursal, guidUsuario }) {
            cd.GUIDSUCURSALES, cd.GUIDCLIENTES, cd.GUIDPROVEEDORES,
            cd.GUIDEMPLEADOS, cd.GUIDCAJAGASTOS, cd.GUIDFORMAPAGOS,
            cd.GUIDBANCOSCUENTAS, cd.GUIDUSUARIOS,
+           RTRIM(fp.GUIDREMITOS) AS GUIDREMITOS,
            s.NOMBRE  AS Sucursal,
            c.NOMBRE  AS Cliente,
            p.NOMBRE  AS Proveedor,
@@ -36,6 +37,7 @@ async function GetCajaDiaria({ desde, hasta, guidSucursal, guidUsuario }) {
            bc.TIPOCUENTA   AS TipoCuenta,
            u.NOMBRE  AS Usuario
     FROM CajaDiaria cd
+    LEFT JOIN FormaPagos     fp ON fp.GUID = cd.GUIDFORMAPAGOS  AND RTRIM(cd.GUIDFORMAPAGOS)  <> ''
     LEFT JOIN Sucursales     s  ON s.GUID  = cd.GUIDSUCURSALES
     LEFT JOIN Clientes       c  ON c.GUID  = cd.GUIDCLIENTES    AND RTRIM(cd.GUIDCLIENTES)    <> ''
     LEFT JOIN Proveedores    p  ON p.GUID  = cd.GUIDPROVEEDORES AND RTRIM(cd.GUIDPROVEEDORES) <> ''

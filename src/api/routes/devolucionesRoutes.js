@@ -17,7 +17,7 @@ router.post('/', async (req, res, next) => {
 // Cambio con venta (atomico: graba cambio + venta nueva + cobro automatico)
 router.post('/cambio', async (req, res, next) => {
   try {
-    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio, itemsCambio, itemsVenta, pagos, emitirFactura, cuit } = req.body;
+    const { guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombreUsuario, nombre, motivo, tipoCambio, itemsCambio, itemsVenta, pagos, emitirFactura, cuit } = req.body;
     if (!motivo || !motivo.trim()) {
       return res.status(400).json({ error: 'El motivo del cambio es obligatorio' });
     }
@@ -25,7 +25,7 @@ router.post('/cambio', async (req, res, next) => {
       return res.status(400).json({ error: 'Debe cargar articulos para la nueva venta' });
     }
     const data = await devolucionesRepo.CreateCambioConVenta({
-      guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio,
+      guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombreUsuario, nombre, motivo, tipoCambio,
       itemsCambio, itemsVenta, pagos, emitirFactura, cuit,
     });
     res.status(201).json(data);

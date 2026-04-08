@@ -1,14 +1,36 @@
 const { getPool, sql } = require('../pool');
 const { newGuid, tsNow, dateToInt, timeToInt, dateToClarion, todayAR } = require('../../utils/guidHelper');
+const configRepo = require('./configRepo');
+const auditoriaPreciosRepo = require('./auditoriaPreciosRepo');
 
 const EMPTY_GUID = '';
 
-async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, cuit, tipoOperacion, items, pagos, emitirFactura }) {
+async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuario, nombreUsuario, nombre, cuit, tipoOperacion, items, pagos, emitirFactura }) {
   const pool = await getPool();
   const tx = pool.transaction();
   await tx.begin();
 
   try {
+    // Validar precios contra BD y % máximo de descuento
+    const maxDescuento = await configRepo.GetMaxDescuento();
+    for (let vi = 0; vi < items.length; vi++) {
+      const item = items[vi];
+      const artResult = await tx.request()
+        .input('guidArt', sql.Char(16), item.guidArticulo)
+        .query(`SELECT PRECIOVENTA FROM Articulos WHERE GUID = @guidArt AND (dts IS NULL OR dts = 0)`);
+      const art = artResult.recordset[0];
+      if (!art) throw new Error(`Artículo no encontrado: ${item.codigoArticulo}`);
+      // Si el precio es menor al de la BD, verificar que no supere el % máximo de descuento
+      if (item.precioUnitario < art.PRECIOVENTA) {
+        const descPct = ((art.PRECIOVENTA - item.precioUnitario) / art.PRECIOVENTA) * 100;
+        if (descPct > maxDescuento) {
+          throw new Error(`El descuento de "${item.descripcion}" (${descPct.toFixed(1)}%) supera el máximo permitido (${maxDescuento}%)`);
+        }
+      }
+      // Guardar precio de BD para auditoría
+      item._precioBase = art.PRECIOVENTA;
+    }
+
     const ts = tsNow();
     const fecha = dateToClarion();
     const hora = timeToInt();
@@ -126,6 +148,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
     let firstGuidCaja = '';
     let creditoDevUsado = 0;
     let creditoDevGuidRemDev = '';
+    let creditoDevGuidRemCambio = '';
     let creditoDevConsumed = false;
     for (const pago of pagos) {
       const guidPago = newGuid();
@@ -137,11 +160,12 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .input('guid', sql.Char(16), guidPago)
         .input('fecha', sql.Date, todayAR())
         .input('tipoComprobante', sql.VarChar(30), (pago.descripcion || pago.tipo || '').substring(0, 30))
-        .input('descripcion', sql.VarChar(255), pago.descripcion || pago.tipo)
+        .input('descripcion', sql.VarChar(60), (pago.descripcion || pago.tipo || '').substring(0, 60))
         .input('importe', sql.Decimal(13, 3), pago.importe)
         .input('importePagar', sql.Decimal(13, 2), pago.importe)
         .input('cuotas', sql.TinyInt, pago.cuotas || 1)
         .input('interes', sql.Decimal(7, 2), pago.interes || 0)
+        .input('coeficiente', sql.Decimal(10, 4), pago.coeficiente || 0)
         .input('tarjetaNumero', sql.Char(20), pago.tarjetaNumero || '')
         .input('guidRemito', sql.Char(16), guidRemito)
         .input('guidFactura', sql.Char(16), EMPTY_GUID)
@@ -153,11 +177,11 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .input('sts', sql.Float, ts)
         .query(`
           INSERT INTO FormaPagos (GUID, FECHA, TIPOCOMPROBANTE, DESCRIPCION, IMPORTE,
-            IMPORTEPAGAR, CUOTAS, INTERES, TARJETANUMERO,
+            IMPORTEPAGAR, CUOTAS, INTERES, COEFICIENTE, TARJETANUMERO,
             GUIDREMITOS, GUIDFACTURAS, GUIDCLIENTES, GUIDCAJADIARIA, GUIDBANCOS,
             GUIDMOVIMIENTOBANCOS, ts, sts)
           VALUES (@guid, @fecha, @tipoComprobante, @descripcion, @importe,
-            @importePagar, @cuotas, @interes, @tarjetaNumero,
+            @importePagar, @cuotas, @interes, @coeficiente, @tarjetaNumero,
             @guidRemito, @guidFactura, @guidCliente, @guidCaja, @guidBanco,
             @guidMovBanco, @ts, @sts)
         `);
@@ -167,7 +191,7 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .input('guid', sql.Char(16), guidCaja)
         .input('fecha', sql.Date, todayAR())
         .input('tipoComprobante', sql.VarChar(40), (pago.descripcion || pago.tipo || '').substring(0, 40))
-        .input('descripcion', sql.VarChar(255), `Venta - ${pago.descripcion || pago.tipo}`)
+        .input('descripcion', sql.VarChar(60), `Venta - ${pago.descripcion || pago.tipo}`.substring(0, 60))
         .input('debe', sql.Decimal(13, 2), pago.importe)
         .input('haber', sql.Decimal(13, 2), 0)
         .input('guidSucursal', sql.Char(16), guidSucursal)
@@ -296,51 +320,82 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         // y si queda crédito remanente, crear nuevo HABER por la diferencia
         const creditoInfo = await tx.request()
           .input('guidCredito', sql.Char(16), pago.guidCreditoDevolucion)
-          .query(`SELECT GUIDREMITOSDEVOLUCIONES, MONTOORIGINAL, MONTOUSADO FROM CreditosDevoluciones WHERE GUID = @guidCredito`);
+          .query(`SELECT GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, MONTOORIGINAL, MONTOUSADO FROM CreditosDevoluciones WHERE GUID = @guidCredito`);
         const creditoRow = creditoInfo.recordset[0];
-        const guidRemDev = creditoRow?.GUIDREMITOSDEVOLUCIONES;
-        if (guidRemDev && guidRemDev.trim()) {
+        const guidRemDev = (creditoRow?.GUIDREMITOSDEVOLUCIONES || '').trim();
+        const guidRemCambio = (creditoRow?.GUIDREMITOSCAMBIOS || '').trim();
+        if (guidRemDev || guidRemCambio) {
           // Calcular remanente DESPUÉS de este uso (MONTOUSADO ya fue actualizado arriba)
           const montoRemanente = Math.round((creditoRow.MONTOORIGINAL - creditoRow.MONTOUSADO) * 100) / 100;
+          const esOrigenCambio = !!guidRemCambio;
 
           // Rastrear uso de crédito para ControlComprobantes
           creditoDevUsado += pago.importe;
           creditoDevGuidRemDev = guidRemDev;
+          creditoDevGuidRemCambio = guidRemCambio;
           creditoDevConsumed = montoRemanente <= 0.01;
 
-          // Reducir HABER del CC de la devolución por el monto consumido
-          await tx.request()
-            .input('guidRemDev', sql.Char(16), guidRemDev)
-            .input('montoUsado', sql.Decimal(13, 3), pago.importe)
-            .query(`
-              UPDATE ControlComprobantes
-              SET HABER = HABER - @montoUsado
-              WHERE GUIDREMITOSDEVOLUCIONES = @guidRemDev AND GUIDREMITOSDEVOLUCIONES <> ''
-                AND CONCILIADO = 0 AND (dts IS NULL OR dts = 0)
-            `);
+          // Reducir HABER del CC del origen (devolución o cambio) por el monto consumido
+          if (esOrigenCambio) {
+            await tx.request()
+              .input('guidRemCambio', sql.Char(16), guidRemCambio)
+              .input('montoUsado', sql.Decimal(13, 3), pago.importe)
+              .query(`
+                UPDATE ControlComprobantes
+                SET HABER = HABER - @montoUsado
+                WHERE GUIDREMITOSCAMBIOS = @guidRemCambio AND GUIDREMITOSCAMBIOS <> ''
+                  AND CONCILIADO = 0 AND (dts IS NULL OR dts = 0)
+              `);
+          } else {
+            await tx.request()
+              .input('guidRemDev', sql.Char(16), guidRemDev)
+              .input('montoUsado', sql.Decimal(13, 3), pago.importe)
+              .query(`
+                UPDATE ControlComprobantes
+                SET HABER = HABER - @montoUsado
+                WHERE GUIDREMITOSDEVOLUCIONES = @guidRemDev AND GUIDREMITOSDEVOLUCIONES <> ''
+                  AND CONCILIADO = 0 AND (dts IS NULL OR dts = 0)
+              `);
+          }
 
           // Marcar HABER originales como cobrados
-          await tx.request()
-            .input('guidRemDev', sql.Char(16), guidRemDev)
-            .input('guidFP', sql.Char(16), guidPago)
-            .query(`
-              UPDATE MovimientoClientes
-              SET GUIDFORMAPAGOS = @guidFP
-              WHERE GUIDREMITOSDEVOLUCIONES = @guidRemDev
-                AND HABER > 0
-                AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL)
-                AND (dts IS NULL OR dts = 0)
-            `);
+          // Cambio MC rows are pre-reconciled at creation, so include RECONCILIADO in filter
+          if (esOrigenCambio) {
+            await tx.request()
+              .input('guidRemCambio', sql.Char(16), guidRemCambio)
+              .input('guidFP', sql.Char(16), guidPago)
+              .query(`
+                UPDATE MovimientoClientes
+                SET GUIDFORMAPAGOS = @guidFP
+                WHERE GUIDREMITOSCAMBIOS = @guidRemCambio
+                  AND HABER > 0
+                  AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL OR GUIDFORMAPAGOS = 'RECONCILIADO')
+                  AND (dts IS NULL OR dts = 0)
+              `);
+          } else {
+            await tx.request()
+              .input('guidRemDev', sql.Char(16), guidRemDev)
+              .input('guidFP', sql.Char(16), guidPago)
+              .query(`
+                UPDATE MovimientoClientes
+                SET GUIDFORMAPAGOS = @guidFP
+                WHERE GUIDREMITOSDEVOLUCIONES = @guidRemDev
+                  AND HABER > 0
+                  AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL)
+                  AND (dts IS NULL OR dts = 0)
+              `);
+          }
 
           // Si queda crédito remanente, crear nuevo movimiento HABER por la diferencia
           if (montoRemanente > 0.01) {
             const guidMovRemanente = newGuid();
+            const descripRemanente = esOrigenCambio ? 'Crédito remanente cambio' : 'Crédito remanente devolución';
             await tx.request()
               .input('guid', sql.Char(16), guidMovRemanente)
               .input('fecha', sql.Decimal(7), dateToClarion())
               .input('cantidad', sql.SmallInt, 0)
               .input('articulo', sql.VarChar(255), '')
-              .input('descripcion', sql.VarChar(2000), `Crédito remanente devolución`)
+              .input('descripcion', sql.VarChar(2000), descripRemanente)
               .input('talle', sql.Decimal(7, 2), 0)
               .input('precioUnitario', sql.Decimal(11, 2), 0)
               .input('iva', sql.Decimal(5, 2), 0)
@@ -356,8 +411,8 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
               .input('guidCaja', sql.Char(16), EMPTY_GUID)
               .input('guidBanco', sql.Char(16), EMPTY_GUID)
               .input('guidMovBanco', sql.Char(16), EMPTY_GUID)
-              .input('guidRemitoDev', sql.Char(16), guidRemDev)
-              .input('guidRemitoCambio', sql.Char(16), EMPTY_GUID)
+              .input('guidRemitoDev', sql.Char(16), esOrigenCambio ? EMPTY_GUID : guidRemDev)
+              .input('guidRemitoCambio', sql.Char(16), esOrigenCambio ? guidRemCambio : EMPTY_GUID)
               .input('ts', sql.Float, ts)
               .input('sts', sql.Float, ts)
               .input('dts', sql.Float, 0)
@@ -443,19 +498,29 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
           @guidRemDev, @guidRemCambio, @guidCaja, @ts, @sts)
       `);
 
-    // Si usa crédito devolución: conciliar/mantener CC de la devolución original
-    if (usaCreditoDev && creditoDevGuidRemDev) {
+    // Si usa crédito devolución/cambio: conciliar/mantener CC del origen
+    if (usaCreditoDev && (creditoDevGuidRemDev || creditoDevGuidRemCambio)) {
       if (creditoDevConsumed) {
-        // Crédito totalmente consumido → conciliar CC de la devolución
-        await tx.request()
-          .input('guidRemDev', sql.Char(16), creditoDevGuidRemDev)
-          .query(`
-            UPDATE ControlComprobantes SET CONCILIADO = 1
-            WHERE GUIDREMITOSDEVOLUCIONES = @guidRemDev AND GUIDREMITOSDEVOLUCIONES <> ''
-              AND CONCILIADO = 0 AND (dts IS NULL OR dts = 0)
-          `);
+        // Crédito totalmente consumido → conciliar CC del origen
+        if (creditoDevGuidRemCambio) {
+          await tx.request()
+            .input('guidRemCambio', sql.Char(16), creditoDevGuidRemCambio)
+            .query(`
+              UPDATE ControlComprobantes SET CONCILIADO = 1
+              WHERE GUIDREMITOSCAMBIOS = @guidRemCambio AND GUIDREMITOSCAMBIOS <> ''
+                AND CONCILIADO = 0 AND (dts IS NULL OR dts = 0)
+            `);
+        } else {
+          await tx.request()
+            .input('guidRemDev', sql.Char(16), creditoDevGuidRemDev)
+            .query(`
+              UPDATE ControlComprobantes SET CONCILIADO = 1
+              WHERE GUIDREMITOSDEVOLUCIONES = @guidRemDev AND GUIDREMITOSDEVOLUCIONES <> ''
+                AND CONCILIADO = 0 AND (dts IS NULL OR dts = 0)
+            `);
+        }
       }
-      // Si crédito NO consumido totalmente → devolución queda CONCILIADO=0 (aún tiene saldo)
+      // Si crédito NO consumido totalmente → origen queda CONCILIADO=0 (aún tiene saldo)
 
       // Si totalVenta > crédito aplicado Y se cobra el resto (no es cta cte) → mov COBRANZA
       if (totalVenta > creditoDevUsado + 0.01 && !esCtaCte) {
@@ -670,6 +735,23 @@ async function CreateVenta({ guidCliente, guidSucursal, guidVendedor, guidUsuari
         .query(`EXEC SP_RecalcularSaldoCliente @guid_cliente = @guid`);
     }
 
+    // Registrar auditoría de cambios de precio manuales
+    for (const item of items) {
+      if (item.precioUnitario !== item._precioBase) {
+        await auditoriaPreciosRepo.RegistrarCambioPrecio(tx, {
+          guidRemito,
+          guidArticulo: item.guidArticulo,
+          guidUsuario: guidUsuario || '',
+          codigoArticulo: item.codigoArticulo,
+          descripcion: item.descripcion,
+          precioBase: item._precioBase,
+          precioMedioPago: item.precioMedioPago || item._precioBase,
+          precioModificado: item.precioUnitario,
+          nombreUsuario: nombreUsuario || '',
+        });
+      }
+    }
+
     await tx.commit();
     return { guid: guidRemito, guidFactura: emitirFactura ? guidFactura : null, total: totalVenta, totalPagos, factura: facturaNumero };
   } catch (err) {
@@ -757,9 +839,31 @@ async function GetVentaDetalle(guidRemito) {
       WHERE mr.GUIDREMITOS = @guid AND (mr.dts IS NULL OR mr.dts = 0)
     `);
 
-  const pagos = await pool.request()
+  let pagos = await pool.request()
     .input('guid', sql.Char(16), guidRemito)
     .query(`SELECT * FROM FormaPagos WHERE GUIDREMITOS = @guid AND (dts IS NULL OR dts = 0)`);
+
+  // Si no hay pagos, buscar en la cadena de cambios originales
+  if (pagos.recordset.length === 0) {
+    const chainResult = await pool.request()
+      .input('guid', sql.Char(16), guidRemito)
+      .query(`
+        -- Buscar pagos del remito original a través de la cadena de cambios
+        WITH CadenaRemitos AS (
+          -- El remito actual puede tener GUIDREMITOSCAMBIOS que apunta a RemitosCambios
+          SELECT rc.GUIDREMITOS AS GuidRemitoOrigen
+          FROM Remitos r
+          JOIN RemitosCambios rc ON rc.GUID = r.GUIDREMITOSCAMBIOS AND (rc.dts IS NULL OR rc.dts = 0)
+          WHERE r.GUID = @guid AND r.GUIDREMITOSCAMBIOS IS NOT NULL AND r.GUIDREMITOSCAMBIOS != ''
+        )
+        SELECT fp.* FROM FormaPagos fp
+        WHERE fp.GUIDREMITOS IN (SELECT GuidRemitoOrigen FROM CadenaRemitos)
+          AND (fp.dts IS NULL OR fp.dts = 0)
+      `);
+    if (chainResult.recordset.length > 0) {
+      pagos = chainResult;
+    }
+  }
 
   return {
     remito: remito.recordset[0] || null,

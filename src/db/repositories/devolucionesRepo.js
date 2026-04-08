@@ -1,5 +1,7 @@
 const { getPool, sql } = require('../pool');
 const { newGuid, tsNow, dateToInt, timeToInt, dateToClarion, todayAR } = require('../../utils/guidHelper');
+const configRepo = require('./configRepo');
+const auditoriaPreciosRepo = require('./auditoriaPreciosRepo');
 
 const EMPTY_GUID = '';
 
@@ -298,7 +300,22 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
       guidNotaCreditoResult = guidNotaCredito;
     }
 
-    // 5. Crear credito de devolucion para uso como forma de pago futura
+    // 5. Obtener medio de pago original del remito para preservar recargos
+    let fpCoeficiente = 0, fpInteres = 0, fpTipoPago = '';
+    if (guidRemitoOriginal && guidRemitoOriginal !== EMPTY_GUID) {
+      const fpRes = await tx.request()
+        .input('guidOrig', sql.Char(16), guidRemitoOriginal)
+        .query(`SELECT TOP 1 COEFICIENTE, INTERES, RTRIM(LTRIM(TIPOCOMPROBANTE)) AS TIPOCOMPROBANTE
+                FROM FormaPagos WHERE GUIDREMITOS = @guidOrig AND (dts IS NULL OR dts = 0)`);
+      const fp = fpRes.recordset[0];
+      if (fp) {
+        fpCoeficiente = fp.COEFICIENTE || 0;
+        fpInteres = fp.INTERES || 0;
+        fpTipoPago = fp.TIPOCOMPROBANTE || '';
+      }
+    }
+
+    // 5b. Crear credito de devolucion para uso como forma de pago futura
     const guidCredito = newGuid();
     await tx.request()
       .input('guid', sql.Char(16), guidCredito)
@@ -307,13 +324,16 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
       .input('guidSucursal', sql.Char(16), guidSucursal)
       .input('fecha', sql.Date, todayAR())
       .input('montoOriginal', sql.Decimal(13, 3), totalDevolucion)
+      .input('coeficiente', sql.Decimal(10, 4), fpCoeficiente)
+      .input('interes', sql.Decimal(7, 2), fpInteres)
+      .input('tipoPago', sql.VarChar(30), fpTipoPago)
       .input('ts', sql.Float, ts)
       .input('sts', sql.Float, ts)
       .query(`
         INSERT INTO CreditosDevoluciones (GUID, GUIDCLIENTES, GUIDREMITOSDEVOLUCIONES, GUIDSUCURSALES,
-          FECHA, MONTOORIGINAL, MONTOUSADO, ESTADO, ts, sts)
+          FECHA, MONTOORIGINAL, MONTOUSADO, ESTADO, COEFICIENTE, INTERES, TIPOPAGO, ts, sts)
         VALUES (@guid, @guidCliente, @guidRemitoDev, @guidSucursal,
-          @fecha, @montoOriginal, 0, 'ACTIVO', @ts, @sts)
+          @fecha, @montoOriginal, 0, 'ACTIVO', @coeficiente, @interes, @tipoPago, @ts, @sts)
       `);
 
     // 6. ControlComprobantes — CRED P/DEVOLUCION
@@ -368,7 +388,7 @@ async function CreateDevolucion({ guidRemitoOriginal, guidCliente, guidSucursal,
 // ============================================================================
 async function CreateCambioConVenta({
   // Datos del cambio
-  guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombre, motivo, tipoCambio,
+  guidRemitoOriginal, guidCliente, guidSucursal, guidVendedor, guidUsuario, nombreUsuario, nombre, motivo, tipoCambio,
   itemsCambio,
   // Datos de la nueva venta
   itemsVenta,
@@ -407,10 +427,28 @@ async function CreateCambioConVenta({
       .input('guidOrig', sql.Char(16), guidRemitoOriginal)
       .query(`SELECT TOP 1 RTRIM(LTRIM(TIPOCOMPROBANTE)) AS TIPOCOMPROBANTE,
               RTRIM(LTRIM(DESCRIPCION)) AS DESCRIPCION,
-              GUIDBANCOS, CUOTAS, INTERES, TARJETANUMERO
+              GUIDBANCOS, CUOTAS, INTERES, COEFICIENTE, TARJETANUMERO
               FROM FormaPagos WHERE GUIDREMITOS = @guidOrig AND (dts IS NULL OR dts = 0)`);
     const fpOrig = fpResult.recordset[0] || {};
     const tipoPago = fpOrig.TIPOCOMPROBANTE || 'EFECTIVO';
+
+    // ── Validar precios contra BD y % máximo de descuento ──
+    const maxDescuento = await configRepo.GetMaxDescuento();
+    for (let vi = 0; vi < itemsVenta.length; vi++) {
+      const item = itemsVenta[vi];
+      const artResult = await tx.request()
+        .input('guidArt', sql.Char(16), item.guidArticulo)
+        .query(`SELECT PRECIOVENTA FROM Articulos WHERE GUID = @guidArt AND (dts IS NULL OR dts = 0)`);
+      const art = artResult.recordset[0];
+      if (!art) throw new Error(`Artículo no encontrado: ${item.codigoArticulo}`);
+      if (item.precioUnitario < art.PRECIOVENTA) {
+        const descPct = ((art.PRECIOVENTA - item.precioUnitario) / art.PRECIOVENTA) * 100;
+        if (descPct > maxDescuento) {
+          throw new Error(`El descuento de "${item.descripcion}" (${descPct.toFixed(1)}%) supera el máximo permitido (${maxDescuento}%)`);
+        }
+      }
+      item._precioBase = art.PRECIOVENTA;
+    }
 
     // ================================================================
     // PARTE A: Remito de Cambio (RemitosCambios + reingreso stock)
@@ -709,7 +747,7 @@ async function CreateCambioConVenta({
     // ================================================================
     let firstGuidCajaCambio = '';
     if (diferencia > 0.01) {
-      const pagosArr = (pagos && pagos.length > 0) ? pagos : [{ tipo: tipoPago, importe: diferencia, descripcion: tipoPago, guidBanco: fpOrig.GUIDBANCOS || EMPTY_GUID, guidBancosCuentas: '', cuotas: fpOrig.CUOTAS || 1, interes: fpOrig.INTERES || 0, tarjetaNumero: fpOrig.TARJETANUMERO || '' }];
+      const pagosArr = (pagos && pagos.length > 0) ? pagos : [{ tipo: tipoPago, importe: diferencia, descripcion: tipoPago, guidBanco: fpOrig.GUIDBANCOS || EMPTY_GUID, guidBancosCuentas: '', cuotas: fpOrig.CUOTAS || 1, interes: fpOrig.INTERES || 0, coeficiente: fpOrig.COEFICIENTE || 0, tarjetaNumero: fpOrig.TARJETANUMERO || '' }];
 
       for (const pago of pagosArr) {
         const guidPago = newGuid();
@@ -720,11 +758,12 @@ async function CreateCambioConVenta({
           .input('guid', sql.Char(16), guidPago)
           .input('fecha', sql.Date, todayAR())
           .input('tipoComprobante', sql.VarChar(30), (pago.descripcion || pago.tipo || '').substring(0, 30))
-          .input('descripcion', sql.VarChar(255), `Cambio - ${pago.descripcion || pago.tipo}`)
+          .input('descripcion', sql.VarChar(60), `Cambio - ${pago.descripcion || pago.tipo}`.substring(0, 60))
           .input('importe', sql.Decimal(13, 3), pago.importe)
           .input('importePagar', sql.Decimal(13, 2), pago.importe)
           .input('cuotas', sql.TinyInt, pago.cuotas || 1)
           .input('interes', sql.Decimal(7, 2), pago.interes || 0)
+          .input('coeficiente', sql.Decimal(10, 4), pago.coeficiente || 0)
           .input('tarjetaNumero', sql.Char(20), pago.tarjetaNumero || '')
           .input('guidRemito', sql.Char(16), guidRemitoVenta)
           .input('guidFactura', sql.Char(16), EMPTY_GUID)
@@ -736,11 +775,11 @@ async function CreateCambioConVenta({
           .input('sts', sql.Float, ts)
           .query(`
             INSERT INTO FormaPagos (GUID, FECHA, TIPOCOMPROBANTE, DESCRIPCION, IMPORTE,
-              IMPORTEPAGAR, CUOTAS, INTERES, TARJETANUMERO,
+              IMPORTEPAGAR, CUOTAS, INTERES, COEFICIENTE, TARJETANUMERO,
               GUIDREMITOS, GUIDFACTURAS, GUIDCLIENTES, GUIDCAJADIARIA, GUIDBANCOS,
               GUIDMOVIMIENTOBANCOS, ts, sts)
             VALUES (@guid, @fecha, @tipoComprobante, @descripcion, @importe,
-              @importePagar, @cuotas, @interes, @tarjetaNumero,
+              @importePagar, @cuotas, @interes, @coeficiente, @tarjetaNumero,
               @guidRemito, @guidFactura, @guidCliente, @guidCaja, @guidBanco,
               @guidMovBanco, @ts, @sts)
           `);
@@ -749,7 +788,7 @@ async function CreateCambioConVenta({
           .input('guid', sql.Char(16), guidCaja)
           .input('fecha', sql.Date, todayAR())
           .input('tipoComprobante', sql.VarChar(40), (pago.descripcion || pago.tipo || '').substring(0, 40))
-          .input('descripcion', sql.VarChar(255), `Cambio - ${pago.descripcion || pago.tipo}`)
+          .input('descripcion', sql.VarChar(60), `Cambio - ${pago.descripcion || pago.tipo}`.substring(0, 60))
           .input('debe', sql.Decimal(13, 2), pago.importe)
           .input('haber', sql.Decimal(13, 2), 0)
           .input('guidSucursal', sql.Char(16), guidSucursal)
@@ -855,10 +894,48 @@ async function CreateCambioConVenta({
     // - diferencia ~= 0: cambio cerrado sin cobro
     // - diferencia > 0 pagada al contado: cambio + cobro cerrado
     // Si diferencia > 0 con cta cte: MC quedan pendientes (generan deuda)
-    // Si diferencia < 0: MC quedan pendientes (crédito a favor del cliente)
+    // Si diferencia < 0: se genera crédito reutilizable (CreditosDevoluciones)
     const esCtaCteCambio = pagos && pagos.some(p => p._esCtaCte);
     const cambioSaldado = (Math.abs(diferencia) <= 0.01) || (diferencia > 0.01 && !esCtaCteCambio);
     if (cambioSaldado) {
+      await tx.request()
+        .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
+        .input('guidRemitoVenta', sql.Char(16), guidRemitoVenta)
+        .query(`
+          UPDATE MovimientoClientes
+          SET GUIDFORMAPAGOS = 'RECONCILIADO'
+          WHERE (GUIDREMITOSCAMBIOS = @guidRemitoCambio OR GUIDREMITOS = @guidRemitoVenta)
+            AND (GUIDFORMAPAGOS = '' OR GUIDFORMAPAGOS IS NULL)
+            AND (dts IS NULL OR dts = 0)
+        `);
+    }
+
+    // Crear crédito reutilizable cuando el cambio genera saldo a favor del cliente
+    let guidCreditoCambio = null;
+    const creditoMontoCambio = diferencia < -0.01 ? Math.round(Math.abs(diferencia) * 100) / 100 : 0;
+    if (diferencia < -0.01) {
+      guidCreditoCambio = newGuid();
+      await tx.request()
+        .input('guid', sql.Char(16), guidCreditoCambio)
+        .input('guidCliente', sql.Char(16), guidCliente)
+        .input('guidRemitoDev', sql.Char(16), EMPTY_GUID)
+        .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
+        .input('guidSucursal', sql.Char(16), guidSucursal)
+        .input('fecha', sql.Date, todayAR())
+        .input('montoOriginal', sql.Decimal(13, 3), creditoMontoCambio)
+        .input('coeficiente', sql.Decimal(10, 4), fpOrig.COEFICIENTE || 0)
+        .input('interes', sql.Decimal(7, 2), fpOrig.INTERES || 0)
+        .input('tipoPago', sql.VarChar(30), tipoPago)
+        .input('ts', sql.Float, ts)
+        .input('sts', sql.Float, ts)
+        .query(`
+          INSERT INTO CreditosDevoluciones (GUID, GUIDCLIENTES, GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, GUIDSUCURSALES,
+            FECHA, MONTOORIGINAL, MONTOUSADO, ESTADO, COEFICIENTE, INTERES, TIPOPAGO, ts, sts)
+          VALUES (@guid, @guidCliente, @guidRemitoDev, @guidRemitoCambio, @guidSucursal,
+            @fecha, @montoOriginal, 0, 'ACTIVO', @coeficiente, @interes, @tipoPago, @ts, @sts)
+        `);
+
+      // Reconciliar MC del cambio: el crédito cubre el saldo a favor
       await tx.request()
         .input('guidRemitoCambio', sql.Char(16), guidRemitoCambio)
         .input('guidRemitoVenta', sql.Char(16), guidRemitoVenta)
@@ -1123,6 +1200,10 @@ async function CreateCambioConVenta({
     }
 
     // ControlComprobantes — CBIO MERCADERIA
+    // Si hay crédito generado (diferencia < 0), el CC empieza con HABER = totalVenta (no totalCambio)
+    // porque la diferencia se rastrea en CreditosDevoluciones
+    const ccHaberCambio = guidCreditoCambio ? totalVenta : totalCambio;
+    const ccConciliadoCambio = guidCreditoCambio ? 1 : (totalVenta === totalCambio ? 1 : 0);
     const guidCCCambio = newGuid();
     await tx.request()
       .input('guid', sql.Char(16), guidCCCambio)
@@ -1130,8 +1211,8 @@ async function CreateCambioConVenta({
       .input('hora', sql.Int, hora)
       .input('concepto', sql.VarChar(255), 'CBIO MERCADERIA')
       .input('debe', sql.Decimal(13, 3), totalVenta)
-      .input('haber', sql.Decimal(13, 3), totalCambio)
-      .input('conciliado', sql.TinyInt, totalVenta === totalCambio ? 1 : 0)
+      .input('haber', sql.Decimal(13, 3), ccHaberCambio)
+      .input('conciliado', sql.TinyInt, ccConciliadoCambio)
       .input('tipoMov', sql.TinyInt, 2)
       .input('guidCliente', sql.Char(16), guidCliente || EMPTY_GUID)
       .input('guidRemito', sql.Char(16), guidRemitoOriginal || EMPTY_GUID)
@@ -1149,6 +1230,35 @@ async function CreateCambioConVenta({
           @guidRemDev, @guidRemCambio, @guidCaja, @ts, @sts)
       `);
 
+    // Si el cambio generó crédito, crear CC adicional para rastrear el crédito pendiente
+    if (guidCreditoCambio) {
+      const guidCCCredCambio = newGuid();
+      await tx.request()
+        .input('guid', sql.Char(16), guidCCCredCambio)
+        .input('fecha', sql.Int, fecha)
+        .input('hora', sql.Int, hora)
+        .input('concepto', sql.VarChar(255), 'CRED P/CAMBIO')
+        .input('debe', sql.Decimal(13, 3), 0)
+        .input('haber', sql.Decimal(13, 3), creditoMontoCambio)
+        .input('conciliado', sql.TinyInt, 0)
+        .input('tipoMov', sql.TinyInt, 2)
+        .input('guidCliente', sql.Char(16), guidCliente || EMPTY_GUID)
+        .input('guidRemito', sql.Char(16), EMPTY_GUID)
+        .input('guidRemDev', sql.Char(16), EMPTY_GUID)
+        .input('guidRemCambio', sql.Char(16), guidRemitoCambio)
+        .input('guidCaja', sql.Char(16), EMPTY_GUID)
+        .input('ts', sql.Float, ts)
+        .input('sts', sql.Float, ts)
+        .query(`
+          INSERT INTO ControlComprobantes (GUID, FECHA, HORA, CONCEPTO, DEBE, HABER,
+            CONCILIADO, TIPOMOVIMIENTO, GUIDCLIENTE, GUIDREMITO,
+            GUIDREMITOSDEVOLUCIONES, GUIDREMITOSCAMBIOS, GUIDCAJADIARIA, ts, sts)
+          VALUES (@guid, @fecha, @hora, @concepto, @debe, @haber,
+            @conciliado, @tipoMov, @guidCliente, @guidRemito,
+            @guidRemDev, @guidRemCambio, @guidCaja, @ts, @sts)
+        `);
+    }
+
     // Conciliar el comprobante original del remito en ControlComprobantes
     await tx.request()
       .input('guidRemito', sql.Char(16), guidRemitoOriginal || EMPTY_GUID)
@@ -1165,6 +1275,23 @@ async function CreateCambioConVenta({
         .query(`EXEC SP_RecalcularSaldoCliente @guid_cliente = @guid`);
     }
 
+    // Registrar auditoría de cambios de precio manuales
+    for (const item of itemsVenta) {
+      if (item.precioUnitario !== item._precioBase) {
+        await auditoriaPreciosRepo.RegistrarCambioPrecio(tx, {
+          guidRemito: guidRemitoVenta,
+          guidArticulo: item.guidArticulo,
+          guidUsuario: guidUsuario || '',
+          codigoArticulo: item.codigoArticulo,
+          descripcion: item.descripcion,
+          precioBase: item._precioBase,
+          precioMedioPago: item.precioMedioPago || item._precioBase,
+          precioModificado: item.precioUnitario,
+          nombreUsuario: nombreUsuario || '',
+        });
+      }
+    }
+
     await tx.commit();
     return {
       guidCambio: guidRemitoCambio,
@@ -1174,6 +1301,7 @@ async function CreateCambioConVenta({
       totalVenta,
       diferencia: diferencia > 0 ? diferencia : 0,
       saldoAFavor: diferencia < -0.01 ? Math.abs(diferencia) : 0,
+      guidCredito: guidCreditoCambio,
       formaPago: diferencia > 0.01 ? ((pagos && pagos.length > 0) ? pagos.map(p => p.tipo).join(', ') : tipoPago) : 'Sin cobro',
       factura: facturaNumero,
       notaCredito: notaCreditoNumero,
@@ -1239,10 +1367,16 @@ async function GetCreditosCliente(guidCliente) {
     .query(`
       SELECT cd.GUID, cd.FECHA, cd.MONTOORIGINAL, cd.MONTOUSADO,
              (cd.MONTOORIGINAL - cd.MONTOUSADO) AS MONTODISPONIBLE,
-             cd.ESTADO, cd.GUIDREMITOSDEVOLUCIONES,
-             rd.NOMBRE AS DevolucionNombre, rd.FECHA AS DevolucionFecha
+             cd.ESTADO, cd.GUIDREMITOSDEVOLUCIONES, cd.GUIDREMITOSCAMBIOS,
+             COALESCE(rd.NOMBRE, rc.NOMBRE) AS DevolucionNombre,
+             COALESCE(rd.FECHA, rc.FECHA) AS DevolucionFecha,
+             CASE WHEN cd.GUIDREMITOSCAMBIOS <> '' THEN 'CAMBIO' ELSE 'DEVOLUCION' END AS Origen,
+             cd.COEFICIENTE AS OrigenCoeficiente,
+             cd.INTERES AS OrigenInteres,
+             cd.TIPOPAGO AS OrigenTipoPago
       FROM CreditosDevoluciones cd
-      LEFT JOIN RemitosDevoluciones rd ON rd.GUID = cd.GUIDREMITOSDEVOLUCIONES
+      LEFT JOIN RemitosDevoluciones rd ON rd.GUID = cd.GUIDREMITOSDEVOLUCIONES AND cd.GUIDREMITOSDEVOLUCIONES <> ''
+      LEFT JOIN RemitosCambios rc ON rc.GUID = cd.GUIDREMITOSCAMBIOS AND cd.GUIDREMITOSCAMBIOS <> ''
       WHERE cd.GUIDCLIENTES = @guidCliente
         AND cd.ESTADO = 'ACTIVO'
         AND (cd.MONTOORIGINAL - cd.MONTOUSADO) > 0
@@ -1259,11 +1393,12 @@ async function GetCreditoByDevolucion(guidDevolucion) {
     .query(`
       SELECT cd.GUID, cd.FECHA, cd.MONTOORIGINAL, cd.MONTOUSADO,
              (cd.MONTOORIGINAL - cd.MONTOUSADO) AS MONTODISPONIBLE,
-             cd.ESTADO, cd.GUIDCLIENTES, cd.GUIDREMITOSDEVOLUCIONES,
-             c.NOMBRE AS ClienteNombre, c.CUIT AS ClienteCuit
+             cd.ESTADO, cd.GUIDCLIENTES, cd.GUIDREMITOSDEVOLUCIONES, cd.GUIDREMITOSCAMBIOS,
+             c.NOMBRE AS ClienteNombre, c.CUIT AS ClienteCuit,
+             CASE WHEN cd.GUIDREMITOSCAMBIOS <> '' THEN 'CAMBIO' ELSE 'DEVOLUCION' END AS Origen
       FROM CreditosDevoluciones cd
       LEFT JOIN Clientes c ON c.GUID = cd.GUIDCLIENTES
-      WHERE cd.GUIDREMITOSDEVOLUCIONES = @guidDev
+      WHERE (cd.GUIDREMITOSDEVOLUCIONES = @guidDev OR cd.GUIDREMITOSCAMBIOS = @guidDev)
         AND (cd.dts IS NULL OR cd.dts = 0)
     `);
   return result.recordset[0] || null;
@@ -1362,9 +1497,19 @@ async function GetCambioDetalle(guidRemitoCambio) {
       WHERE mr.GUIDREMITOSCAMBIOS = @guid AND (mr.dts IS NULL OR mr.dts = 0)
     `);
 
+  const credito = await pool.request()
+    .input('guid', sql.Char(16), guidRemitoCambio)
+    .query(`
+      SELECT GUID, MONTOORIGINAL, MONTOUSADO, ESTADO,
+             (MONTOORIGINAL - MONTOUSADO) AS MONTODISPONIBLE
+      FROM CreditosDevoluciones
+      WHERE GUIDREMITOSCAMBIOS = @guid AND (dts IS NULL OR dts = 0)
+    `);
+
   return {
     cambio: cambio.recordset[0] || null,
     items: items.recordset,
+    credito: credito.recordset[0] || null,
   };
 }
 

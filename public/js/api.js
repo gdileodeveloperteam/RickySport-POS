@@ -27,9 +27,16 @@ const API = (function () {
   async function DeleteUsuario(guid) { return Request(`/usuarios/${guid}`, { method: 'DELETE' }); }
 
   // Artículos
-  async function GetArticulos(search) {
-    const q = search ? `?search=${encodeURIComponent(search)}` : '';
-    return Request(`/articulos${q}`);
+  async function GetArticulos(search, page, limit, sortBy, sortDir, guidProveedor) {
+    const q = new URLSearchParams();
+    if (search) q.set('search', search);
+    if (page) q.set('page', page);
+    if (limit) q.set('limit', limit);
+    if (sortBy) q.set('sortBy', sortBy);
+    if (sortDir) q.set('sortDir', sortDir);
+    if (guidProveedor) q.set('guidProveedor', guidProveedor);
+    const qs = q.toString();
+    return Request(`/articulos${qs ? '?' + qs : ''}`);
   }
 
   async function GetArticuloByCodigo(codigo) {
@@ -42,6 +49,18 @@ const API = (function () {
 
   async function GetMovimientoArticulos(guidArticulo) {
     return Request(`/articulos/${guidArticulo}/movimientos`);
+  }
+
+  async function CreateArticulo(data) {
+    return Request('/articulos', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async function UpdateArticulo(guid, data) {
+    return Request(`/articulos/${guid}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async function DeleteArticulo(guid) {
+    return Request(`/articulos/${guid}`, { method: 'DELETE' });
   }
 
   // Clientes
@@ -353,9 +372,21 @@ const API = (function () {
     return Request('/arca/autorizar', { method: 'POST', body: JSON.stringify({ guidFactura }) });
   }
 
+  // Configuración
+  async function GetMaxDescuento() {
+    return Request('/config/max-descuento');
+  }
+  async function SetMaxDescuento(porcentaje) {
+    return Request('/config/max-descuento', { method: 'PUT', body: JSON.stringify({ porcentaje }) });
+  }
+  async function GetAuditoriaPrecios(params = {}) {
+    const q = new URLSearchParams(params).toString();
+    return Request(`/config/auditoria-precios${q ? '?' + q : ''}`);
+  }
+
   return {
     Login, GetUsuarios, GetUsuarioByGuid, CreateUsuario, UpdateUsuario, DeleteUsuario,
-    GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos,
+    GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos, CreateArticulo, UpdateArticulo, DeleteArticulo,
     GetClientes, CreateCliente, UpdateCliente, DisableCliente, ReactivarCliente, UpdateClienteContacto, GetClienteByGuid, GetClienteSaldo, GetClientesCtaCte, ValidarCreditoCtaCte, GetClienteMovimientos, GetClienteFacturas, GetClienteDeudaActiva, CobroDeuda,
     GetSucursales, GetSucursalByGuid, GetConfiguraciones, CreateSucursal, UpdateSucursal, DeleteSucursal, GetVendedores,
     GetTCPagos, GetTCPagoByGuid, CreateTCPago, UpdateTCPago, DeleteTCPago,
@@ -374,5 +405,6 @@ const API = (function () {
     GetTiposCobrosPagos, GetTipoCobroPagoByGuid, CreateTipoCobroPago, UpdateTipoCobroPago, DeleteTipoCobroPago,
     GetCajaDiaria, GetCajaDiariaResumen,
     AutorizarARCA,
+    GetMaxDescuento, SetMaxDescuento, GetAuditoriaPrecios,
   };
 })();

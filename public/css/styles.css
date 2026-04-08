@@ -112,6 +112,11 @@ th.sortable.sort-desc::after {
   color: #0d6efd;
 }
 
+/* Caja Diaria - filas expandibles */
+tr.cd-expandible:hover { background-color: #f0f7ff !important; }
+tr.cd-detalle-row { background: transparent !important; }
+.cd-chevron { transition: transform 0.15s; font-size: 0.75rem; }
+
 /* Talle/size selector */
 .talle-btn {
   min-width: 45px;
