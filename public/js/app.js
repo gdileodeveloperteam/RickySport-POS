@@ -63,6 +63,21 @@ const Can = {
   },
 };
 
+// Helper para interpolar en templates de botones. Devuelve `disabled title="..."`
+// cuando el usuario NO tiene el permiso requerido, o string vacio cuando si lo tiene.
+// Debe ir ANTES del title del boton (si lo tiene) para que el title de gating tenga prioridad.
+// Uso:
+//   `<button class="..." ${GateBtn({ modulo: 'ARTICULOS', nivel: 2 })} onclick="...">Nuevo</button>`
+//   `<button ${GateBtn({ especial: 'USUARIO.ELIMINAR' })} title="Eliminar" onclick="...">...</button>`
+function GateBtn(spec) {
+  const ok = spec.especial ? Can.especial(spec.especial) : Can.modulo(spec.modulo, spec.nivel || 1);
+  if (ok) return '';
+  const msg = spec.especial
+    ? `Requiere permiso ${spec.especial}`
+    : `Requiere nivel ${spec.nivel || 1} en modulo ${spec.modulo}`;
+  return `disabled title="${msg}"`;
+}
+
 function ApplyMenuPermissions() {
   document.querySelectorAll('.sidebar .nav-link[data-section]').forEach(a => {
     const section = a.dataset.section;
@@ -80,6 +95,20 @@ function ApplyMenuPermissions() {
     const groupLi = grp.closest('.nav-item');
     if (groupLi) groupLi.classList.toggle('d-none', visibles.length === 0);
   });
+  // Botones estaticos del HTML (modales): setear disabled/title segun permisos.
+  const gateStatic = (id, spec) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const ok = spec.especial ? Can.especial(spec.especial) : Can.modulo(spec.modulo, spec.nivel || 1);
+    btn.disabled = !ok;
+    if (!ok) {
+      btn.title = spec.especial
+        ? `Requiere permiso ${spec.especial}`
+        : `Requiere nivel ${spec.nivel || 1} en modulo ${spec.modulo}`;
+    }
+  };
+  gateStatic('btnConfirmarVenta', { modulo: 'POS', nivel: 2 });
+  gateStatic('btnAutorizarFactura', { especial: 'ARCA.AUTORIZAR' });
 }
 
 function FirstAccessibleSection() {
@@ -3648,7 +3677,7 @@ async function SeleccionarVentaDev(guid) {
               `).join('')}
             </tbody>
           </table>
-          <button class="btn btn-danger" onclick="ConfirmarDevolucion('${guid}', ${JSON.stringify(itemsDisponibles).replace(/"/g, '&quot;')}, '${(r.GUIDCLIENTES || '').trim()}', '${(r.NOMBRE || '').trim().replace(/'/g, "\\'")}')">
+          <button class="btn btn-danger" ${GateBtn({ modulo: 'DEVOLUCIONES', nivel: 2 })} onclick="ConfirmarDevolucion('${guid}', ${JSON.stringify(itemsDisponibles).replace(/"/g, '&quot;')}, '${(r.GUIDCLIENTES || '').trim()}', '${(r.NOMBRE || '').trim().replace(/'/g, "\\'")}')">
             <i class="bi bi-check-circle me-1"></i>Confirmar Devolucion
           </button>
         </div>
@@ -5055,7 +5084,7 @@ function RenderArticulosCRUD(container) {
   container.innerHTML = `
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h4 class="mb-0"><i class="bi bi-box-seam me-2"></i>Articulos</h4>
-      <button class="btn btn-primary" onclick="MostrarFormArticulo()"><i class="bi bi-plus-lg me-1"></i>Nuevo Articulo</button>
+      <button class="btn btn-primary" ${GateBtn({ modulo: 'ARTICULOS', nivel: 2 })} onclick="MostrarFormArticulo()"><i class="bi bi-plus-lg me-1"></i>Nuevo Articulo</button>
     </div>
     <div class="card shadow-sm mb-3">
       <div class="card-body py-2">
@@ -5138,8 +5167,8 @@ async function CargarArticulosCRUD(page) {
                 <td class="text-end">${FormatMoney(a.PRECIOCOSTO || 0)}</td>
                 <td class="text-end fw-bold">${FormatMoney(a.PRECIOVENTA || 0)}</td>
                 <td class="text-center">
-                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarArticulo('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
-                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarArticulo('${guid}', '${desc.replace(/'/g,"\\'")}')"><i class="bi bi-trash"></i></button>
+                  <button class="btn btn-sm btn-outline-primary me-1" ${GateBtn({ modulo: 'ARTICULOS', nivel: 3 })} onclick="EditarArticulo('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" ${GateBtn({ modulo: 'ARTICULOS', nivel: 4 })} onclick="EliminarArticulo('${guid}', '${desc.replace(/'/g,"\\'")}')" title="Eliminar"><i class="bi bi-trash"></i></button>
                 </td>
               </tr>`;
             }).join('')}
@@ -5484,7 +5513,7 @@ function RenderTransferencias(container) {
               </table>
 
               <div class="text-end">
-                <button class="btn btn-primary btn-lg" onclick="ConfirmarTransferencia()">
+                <button class="btn btn-primary btn-lg" ${GateBtn({ modulo: 'TRANSFERENCIAS', nivel: 2 })} onclick="ConfirmarTransferencia()">
                   <i class="bi bi-send me-1"></i>Confirmar Transferencia
                 </button>
               </div>
@@ -5737,7 +5766,7 @@ function RenderGastos(container) {
                 </div>
               </div>
               <div class="text-end mt-3">
-                <button class="btn btn-primary btn-lg" onclick="ConfirmarGasto()">
+                <button class="btn btn-primary btn-lg" ${GateBtn({ modulo: 'GASTOS', nivel: 2 })} onclick="ConfirmarGasto()">
                   <i class="bi bi-check-circle me-1"></i>Registrar Gasto
                 </button>
               </div>
@@ -5780,7 +5809,7 @@ function RenderGastos(container) {
                 </div>
               </div>
               <div class="text-end mt-3">
-                <button class="btn btn-warning btn-lg" onclick="ConfirmarAdelanto()">
+                <button class="btn btn-warning btn-lg" ${GateBtn({ modulo: 'GASTOS', nivel: 2 })} onclick="ConfirmarAdelanto()">
                   <i class="bi bi-cash me-1"></i>Registrar Retiro
                 </button>
               </div>
@@ -6169,7 +6198,7 @@ async function RenderCompras(container) {
               </table>
 
               <div class="text-end">
-                <button class="btn btn-success btn-lg" onclick="ConfirmarCompra()">
+                <button class="btn btn-success btn-lg" ${GateBtn({ modulo: 'COMPRAS', nivel: 2 })} onclick="ConfirmarCompra()">
                   <i class="bi bi-check-circle me-1"></i>Confirmar Compra
                 </button>
               </div>
@@ -6552,7 +6581,7 @@ async function BuscarClientes(page) {
                   <button class="btn btn-sm btn-outline-primary me-1" title="Movimientos" onclick="VerMovimientosCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')">
                     <i class="bi bi-list-ul"></i>
                   </button>
-                  <button class="btn btn-sm btn-outline-warning me-1" title="Editar" onclick="EditarCliente('${c.GUID.trim()}')">
+                  <button class="btn btn-sm btn-outline-warning me-1" ${GateBtn({ modulo: 'CLIENTES', nivel: 3 })} title="Editar" onclick="EditarCliente('${c.GUID.trim()}')">
                     <i class="bi bi-pencil"></i>
                   </button>
                   ${btnAccion}
@@ -7419,7 +7448,7 @@ async function LoadBancos() {
     div.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3">
         <span class="text-muted">${bancos.length} banco(s)</span>
-        <button class="btn btn-primary btn-sm" onclick="ShowFormBanco()"><i class="bi bi-plus-circle me-1"></i>Nuevo Banco</button>
+        <button class="btn btn-primary btn-sm" ${GateBtn({ modulo: 'BANCOS', nivel: 2 })} onclick="ShowFormBanco()"><i class="bi bi-plus-circle me-1"></i>Nuevo Banco</button>
       </div>
       <div id="formBancoContainer"></div>
       <table class="table table-sm table-hover">
@@ -7437,8 +7466,8 @@ async function LoadBancos() {
               <td>${(b.TELEFONO || '').trim()}</td>
               <td class="text-end">${FormatMoney(b.SALDO)}</td>
               <td>
-                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormBanco('${b.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
-                <button class="btn btn-outline-danger btn-sm" onclick="EliminarBanco('${b.GUID.trim()}')"><i class="bi bi-trash"></i></button>
+                <button class="btn btn-outline-primary btn-sm me-1" ${GateBtn({ modulo: 'BANCOS', nivel: 3 })} onclick="ShowFormBanco('${b.GUID.trim()}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" ${GateBtn({ modulo: 'BANCOS', nivel: 4 })} onclick="EliminarBanco('${b.GUID.trim()}')" title="Eliminar"><i class="bi bi-trash"></i></button>
               </td>
             </tr>
           `).join('')}
@@ -7516,7 +7545,7 @@ async function LoadBancosCuentas() {
             <option value="">Todos los bancos</option>${bancosOpts}
           </select>
         </div>
-        <button class="btn btn-primary btn-sm" id="btnNuevaCuenta" onclick="ShowFormCuenta()"><i class="bi bi-plus-circle me-1"></i>Nueva Cuenta</button>
+        <button class="btn btn-primary btn-sm" id="btnNuevaCuenta" ${GateBtn({ modulo: 'BANCOS', nivel: 2 })} onclick="ShowFormCuenta()"><i class="bi bi-plus-circle me-1"></i>Nueva Cuenta</button>
       </div>
       <div id="formCuentaContainer"></div>
       <table class="table table-sm table-hover">
@@ -7543,8 +7572,8 @@ function RenderFilasCuentas(cuentas) {
       <td>${(c.SUCURSAL || '').trim()}</td>
       <td class="text-end">${FormatMoney(c.SALDO)}</td>
       <td>
-        <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormCuenta('${c.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-outline-danger btn-sm" onclick="EliminarCuenta('${c.GUID.trim()}')"><i class="bi bi-trash"></i></button>
+        <button class="btn btn-outline-primary btn-sm me-1" ${GateBtn({ modulo: 'BANCOS', nivel: 3 })} onclick="ShowFormCuenta('${c.GUID.trim()}')" title="Editar"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-outline-danger btn-sm" ${GateBtn({ modulo: 'BANCOS', nivel: 4 })} onclick="EliminarCuenta('${c.GUID.trim()}')" title="Eliminar"><i class="bi bi-trash"></i></button>
       </td>
     </tr>
   `).join('');
@@ -7668,7 +7697,7 @@ async function LoadBancosConceptos() {
     div.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3">
         <span class="text-muted">${conceptos.length} concepto(s)</span>
-        <button class="btn btn-primary btn-sm" onclick="ShowFormConcepto()"><i class="bi bi-plus-circle me-1"></i>Nuevo Concepto</button>
+        <button class="btn btn-primary btn-sm" ${GateBtn({ modulo: 'BANCOS', nivel: 2 })} onclick="ShowFormConcepto()"><i class="bi bi-plus-circle me-1"></i>Nuevo Concepto</button>
       </div>
       <div id="formConceptoContainer"></div>
       <table class="table table-sm table-hover">
@@ -7681,8 +7710,8 @@ async function LoadBancosConceptos() {
               <td>${(c.DESCRIPCION || '').trim()}</td>
               <td>${(c.TIPOCONCEPTO || '').trim()}</td>
               <td>
-                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormConcepto('${c.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
-                <button class="btn btn-outline-danger btn-sm" onclick="EliminarConcepto('${c.GUID.trim()}')"><i class="bi bi-trash"></i></button>
+                <button class="btn btn-outline-primary btn-sm me-1" ${GateBtn({ modulo: 'BANCOS', nivel: 3 })} onclick="ShowFormConcepto('${c.GUID.trim()}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" ${GateBtn({ modulo: 'BANCOS', nivel: 4 })} onclick="EliminarConcepto('${c.GUID.trim()}')" title="Eliminar"><i class="bi bi-trash"></i></button>
               </td>
             </tr>
           `).join('')}
@@ -7754,7 +7783,7 @@ async function LoadConceptosPorBanco() {
             <option value="">Todos los bancos</option>${bancosOpts}
           </select>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="ShowFormHomologacion()"><i class="bi bi-plus-circle me-1"></i>Nueva Homologaci&oacute;n</button>
+        <button class="btn btn-primary btn-sm" ${GateBtn({ modulo: 'BANCOS', nivel: 2 })} onclick="ShowFormHomologacion()"><i class="bi bi-plus-circle me-1"></i>Nueva Homologaci&oacute;n</button>
       </div>
       <div id="formHomologacionContainer"></div>
       <table class="table table-sm table-hover">
@@ -7777,8 +7806,8 @@ function RenderFilasHomologacion(items) {
       <td>${(i.CODIGOCONCEPTOSEGUNBANCO || '').trim()}</td>
       <td>${(i.DESCRIPCIONSEGUNBANCO || '').trim()}</td>
       <td>
-        <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormHomologacion('${i.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-outline-danger btn-sm" onclick="EliminarHomologacion('${i.GUID.trim()}')"><i class="bi bi-trash"></i></button>
+        <button class="btn btn-outline-primary btn-sm me-1" ${GateBtn({ modulo: 'BANCOS', nivel: 3 })} onclick="ShowFormHomologacion('${i.GUID.trim()}')" title="Editar"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-outline-danger btn-sm" ${GateBtn({ modulo: 'BANCOS', nivel: 4 })} onclick="EliminarHomologacion('${i.GUID.trim()}')" title="Eliminar"><i class="bi bi-trash"></i></button>
       </td>
     </tr>
   `).join('');
@@ -7865,7 +7894,7 @@ async function LoadTCPagos() {
     div.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3">
         <span class="text-muted">${tcpagos.length} medio(s) de pago</span>
-        <button class="btn btn-primary btn-sm" onclick="ShowFormTCPago()"><i class="bi bi-plus-circle me-1"></i>Nuevo Medio de Pago</button>
+        <button class="btn btn-primary btn-sm" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="ShowFormTCPago()"><i class="bi bi-plus-circle me-1"></i>Nuevo Medio de Pago</button>
       </div>
       <div id="formTCPagoContainer"></div>
       <table class="table table-sm table-hover">
@@ -7895,8 +7924,8 @@ async function LoadTCPagos() {
               <td class="text-end">${tc.COEFICIENTE || 0}</td>
               <td class="text-end text-nowrap">
                 ${tienePlanes ? `<button class="btn btn-outline-info btn-sm me-1" onclick="TogglePlanes('${guid}')" title="Ver planes (${tc.CANTPLANES})"><i class="bi bi-list-ol"></i> ${tc.CANTPLANES}</button>` : ''}
-                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormTCPago('${guid}')"><i class="bi bi-pencil"></i></button>
-                <button class="btn btn-outline-danger btn-sm" onclick="EliminarTCPago('${guid}')"><i class="bi bi-trash"></i></button>
+                <button class="btn btn-outline-primary btn-sm me-1" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="ShowFormTCPago('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="EliminarTCPago('${guid}')" title="Eliminar"><i class="bi bi-trash"></i></button>
               </td>
             </tr>
             <tr id="planesRow_${guid}" class="d-none">
@@ -7904,7 +7933,7 @@ async function LoadTCPagos() {
                 <div class="p-3">
                   <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="fw-semibold mb-0"><i class="bi bi-list-ol me-1"></i>Planes de Cuotas</h6>
-                    <button class="btn btn-outline-success btn-sm" onclick="ShowFormPlan('${guid}')"><i class="bi bi-plus me-1"></i>Nuevo Plan</button>
+                    <button class="btn btn-outline-success btn-sm" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="ShowFormPlan('${guid}')"><i class="bi bi-plus me-1"></i>Nuevo Plan</button>
                   </div>
                   <div id="planesContainer_${guid}"><div class="text-muted small">Cargando...</div></div>
                   <div id="formPlanContainer_${guid}"></div>
@@ -7946,8 +7975,8 @@ async function LoadPlanesTCPago(guidTcPago) {
               <td class="text-end">${p.INTERES || 0}%</td>
               <td class="text-end">${p.COEFICIENTE || 0}</td>
               <td class="text-end">
-                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormPlan('${guidTcPago}', '${p.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
-                <button class="btn btn-outline-danger btn-sm" onclick="EliminarPlan('${p.GUID.trim()}', '${guidTcPago}')"><i class="bi bi-trash"></i></button>
+                <button class="btn btn-outline-primary btn-sm me-1" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="ShowFormPlan('${guidTcPago}', '${p.GUID.trim()}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="EliminarPlan('${p.GUID.trim()}', '${guidTcPago}')" title="Eliminar"><i class="bi bi-trash"></i></button>
               </td>
             </tr>
           `).join('')}
@@ -8160,7 +8189,7 @@ async function LoadTiposCobrosPagos() {
     div.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3">
         <span class="text-muted">${items.length} tipo(s) de cobro/pago</span>
-        <button class="btn btn-primary btn-sm" onclick="ShowFormTipoCobroPago()"><i class="bi bi-plus-circle me-1"></i>Nuevo Tipo</button>
+        <button class="btn btn-primary btn-sm" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="ShowFormTipoCobroPago()"><i class="bi bi-plus-circle me-1"></i>Nuevo Tipo</button>
       </div>
       <div id="formTipoCobroPagoContainer"></div>
       <table class="table table-sm table-hover">
@@ -8181,8 +8210,8 @@ async function LoadTiposCobrosPagos() {
               <td>${(r.DESCRIPCION || '').trim()}</td>
               <td><span class="badge ${TIPO_MOV_BADGES[mov] || 'bg-secondary'}">${TIPO_MOV_LABELS[mov] || mov}</span></td>
               <td class="text-end">
-                <button class="btn btn-outline-primary btn-sm me-1" onclick="ShowFormTipoCobroPago('${guid}')"><i class="bi bi-pencil"></i></button>
-                <button class="btn btn-outline-danger btn-sm" onclick="EliminarTipoCobroPago('${guid}')"><i class="bi bi-trash"></i></button>
+                <button class="btn btn-outline-primary btn-sm me-1" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="ShowFormTipoCobroPago('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger btn-sm" ${GateBtn({ especial: 'CONFIG.TIPOS_COBRO_PAGO' })} onclick="EliminarTipoCobroPago('${guid}')" title="Eliminar"><i class="bi bi-trash"></i></button>
               </td>
             </tr>`;
           }).join('')}
@@ -8270,7 +8299,7 @@ function RenderSucursales(container) {
     <div class="card shadow-sm mb-3">
       <div class="card-body d-flex gap-2 align-items-center">
         <input type="text" id="sucursalSearch" class="form-control" placeholder="Buscar por nombre..." onkeyup="BuscarSucursales()">
-        <button class="btn btn-success" onclick="MostrarFormSucursal()"><i class="bi bi-plus-circle me-1"></i>Nueva</button>
+        <button class="btn btn-success" ${GateBtn({ modulo: 'SUCURSALES', nivel: 2 })} onclick="MostrarFormSucursal()"><i class="bi bi-plus-circle me-1"></i>Nueva</button>
       </div>
     </div>
     <div id="formSucursalContainer"></div>
@@ -8313,8 +8342,8 @@ async function BuscarSucursales() {
                 <td>${(s.EMAIL || '').trim()}</td>
                 <td>${(s.CELULAR || '').trim()}</td>
                 <td class="text-end">
-                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarSucursal('${s.GUID.trim()}')"><i class="bi bi-pencil"></i></button>
-                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarSucursal('${s.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-trash"></i></button>
+                  <button class="btn btn-sm btn-outline-primary me-1" ${GateBtn({ modulo: 'SUCURSALES', nivel: 3 })} onclick="EditarSucursal('${s.GUID.trim()}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" ${GateBtn({ modulo: 'SUCURSALES', nivel: 4 })} onclick="EliminarSucursal('${s.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')" title="Eliminar"><i class="bi bi-trash"></i></button>
                 </td>
               </tr>`;
             }).join('')}
@@ -8443,7 +8472,7 @@ function RenderUsuarios(container) {
   container.innerHTML = `
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Usuarios</h4>
-      <button class="btn btn-primary" onclick="MostrarFormUsuario()"><i class="bi bi-plus-lg me-1"></i>Nuevo Usuario</button>
+      <button class="btn btn-primary" ${GateBtn({ modulo: 'USUARIOS', nivel: 2 })} onclick="MostrarFormUsuario()"><i class="bi bi-plus-lg me-1"></i>Nuevo Usuario</button>
     </div>
     <div class="card shadow-sm mb-3">
       <div class="card-body py-2">
@@ -8527,8 +8556,8 @@ async function CargarUsuarios(page) {
                 <td>${u.NIVEL || 0}</td>
                 <td>${sucNombre ? (sucNombre.NOMBRE || '').trim() : '-'}</td>
                 <td class="text-center">
-                  <button class="btn btn-sm btn-outline-primary me-1" onclick="EditarUsuario('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
-                  <button class="btn btn-sm btn-outline-danger" onclick="EliminarUsuario('${guid}', '${nombre.replace(/'/g, "\\'")}')" title="Eliminar"><i class="bi bi-trash"></i></button>
+                  <button class="btn btn-sm btn-outline-primary me-1" ${GateBtn({ modulo: 'USUARIOS', nivel: 3 })} onclick="EditarUsuario('${guid}')" title="Editar"><i class="bi bi-pencil"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" ${GateBtn({ especial: 'USUARIO.ELIMINAR' })} onclick="EliminarUsuario('${guid}', '${nombre.replace(/'/g, "\\'")}')" title="Eliminar"><i class="bi bi-trash"></i></button>
                 </td>
               </tr>`;
             }).join('')}
@@ -8697,7 +8726,7 @@ async function RenderAjustes(container) {
         <div class="input-group" style="max-width:250px">
           <input type="number" class="form-control" id="inputMaxDescuento" value="${maxDesc}" min="0" max="100" step="0.5">
           <span class="input-group-text">%</span>
-          <button class="btn btn-primary" id="btnGuardarDescuento" onclick="GuardarMaxDescuento()">
+          <button class="btn btn-primary" id="btnGuardarDescuento" ${GateBtn({ especial: 'CONFIG.MAX_DESCUENTO' })} onclick="GuardarMaxDescuento()">
             <i class="bi bi-check-lg me-1"></i>Guardar
           </button>
         </div>
