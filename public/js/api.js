@@ -2,12 +2,27 @@ const API = (function () {
   const BASE = '/api';
 
   async function Request(url, options = {}) {
-    const res = await fetch(`${BASE}${url}`, {
-      headers: { 'Content-Type': 'application/json' },
-      ...options,
-    });
+    // Mergear headers respetando los que pase el caller
+    const headers = Object.assign(
+      { 'Content-Type': 'application/json' },
+      options.headers || {}
+    );
+
+    // Auto-attach X-User-Guid si hay sesion activa (Fase 2/3 del sistema de permisos).
+    // Defensivo: chequea que State exista (por orden de carga de scripts) y que tenga GUID.
+    if (typeof State !== 'undefined' && State && State.usuario && State.usuario.GUID) {
+      headers['X-User-Guid'] = String(State.usuario.GUID).trim();
+    }
+
+    const res = await fetch(`${BASE}${url}`, { ...options, headers });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
+      // Sesion invalidada: forzar relogin (usuario borrado/deshabilitado mientras navegaba)
+      if (res.status === 401 && err.code === 'USER_INVALID') {
+        if (typeof App !== 'undefined' && App && typeof App.Logout === 'function') {
+          App.Logout();
+        }
+      }
       throw new Error(err.error || 'Error en la solicitud');
     }
     return res.json();
