@@ -4,10 +4,11 @@ const arcaRepo = require('../../db/repositories/arcaRepo');
 const { requirePermission } = require('../middleware/auth');
 
 // POST /api/arca/autorizar
-// NOTA: ademas del nivel de modulo ARCA, en Fase 3c se aplicara el permiso
-// especial ARCA.AUTORIZAR sobre este mismo endpoint.
+// Gated por permiso especial ARCA.AUTORIZAR (auditado en AuditoriaAcciones).
+// No se chequea el modulo ARCA: la autorizacion a AFIP es una accion puntual
+// que se delega via permiso especial — mismo patron que USUARIO.ELIMINAR.
 router.post('/autorizar',
-  requirePermission({ modulo: 'ARCA', nivel: 2 }),
+  requirePermission({ especial: 'ARCA.AUTORIZAR' }),
   async (req, res, next) => {
     try {
       const { guidFactura } = req.body;
