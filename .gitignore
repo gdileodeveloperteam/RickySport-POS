@@ -16,6 +16,8 @@ RickySportDataBaseorig.sql
 RickySportDataBaseESTRUCT.sql
 GESTIONWEB_MYSQL.sql
 MovimientoArticulos*.sql
+Ricky_depo.sql
+migrations/Ricky_depo.sql
 
 # Archivos OS
 Thumbs.db
