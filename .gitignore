@@ -4,3 +4,19 @@ node_modules/
 node
 npm
 rickysport@1.0.0
+
+# Backups y dumps de base de datos — no deben versionarse (datos sensibles + tamaño)
+*.rar
+*.bak
+RICKYSPORT_PRODUCCION.sql
+RickySportDataBase.sql
+RickySportDataBase_*.sql
+RickySportDataBasexx*.sql
+RickySportDataBaseorig.sql
+RickySportDataBaseESTRUCT.sql
+GESTIONWEB_MYSQL.sql
+MovimientoArticulos*.sql
+
+# Archivos OS
+Thumbs.db
+.DS_Store
