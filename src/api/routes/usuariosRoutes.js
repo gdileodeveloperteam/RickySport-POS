@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const repo = require('../../db/repositories/usuariosRepo');
+const seguridadRepo = require('../../db/repositories/seguridadRepo');
 
 router.post('/login', async (req, res, next) => {
   try {
@@ -12,7 +13,17 @@ router.post('/login', async (req, res, next) => {
     if (!usuario) {
       return res.status(401).json({ error: 'Usuario o clave incorrectos' });
     }
-    res.json(usuario);
+
+    // Resolver rol + permisos efectivos desde la matriz de seguridad (Fase 2).
+    // Si por alguna razon falla (usuario sin rol, etc.), se retornan permisos vacios
+    // para no romper el login — la UI actua como si el usuario no tuviera accesos.
+    const perfil = await seguridadRepo.GetUsuarioConPermisos((usuario.GUID || '').trim());
+
+    res.json({
+      ...usuario,
+      rol: perfil ? perfil.rol : null,
+      permisos: perfil ? perfil.permisos : { modulos: {}, especiales: [] },
+    });
   } catch (err) { next(err); }
 });
 
