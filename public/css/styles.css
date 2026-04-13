@@ -22,6 +22,33 @@ body {
   color: #fff;
 }
 
+/* Sidebar groups (desplegables) */
+.sidebar .nav-link.sidebar-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  color: #212529;
+  cursor: pointer;
+}
+
+.sidebar .nav-link.sidebar-group:hover {
+  background-color: #e9ecef;
+}
+
+.sidebar .sidebar-chevron {
+  transition: transform 0.2s ease;
+  font-size: 0.85rem;
+}
+
+.sidebar .nav-link.sidebar-group[aria-expanded="true"] .sidebar-chevron {
+  transform: rotate(180deg);
+}
+
+.sidebar .nav-link.sidebar-group[aria-expanded="true"] {
+  background-color: #f1f3f5;
+}
+
 /* POS Grid */
 .pos-item-row {
   transition: background-color 0.15s;
