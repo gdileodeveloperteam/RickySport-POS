@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 
 const { version, name } = require('./version');
+const { loadUser } = require('./api/middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,6 +12,12 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Middleware de autenticacion (Fase 2 del sistema de permisos).
+// Montado en /api: carga req.user a partir del header X-User-Guid o del body,
+// excepto para /api/version y /api/usuarios/login. Es tolerante: si no viene
+// guid, sigue con req.user = null (no bloquea).
+app.use('/api', loadUser);
 
 // Version / Health
 app.get('/api/version', (req, res) => res.json({ version, name }));
