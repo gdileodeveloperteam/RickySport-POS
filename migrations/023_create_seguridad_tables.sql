@@ -1,20 +1,12 @@
 SET NOCOUNT ON;
-GO
 
 -- =============================================================================
 -- 23. Seguridad — Estructura (6 tablas + ALTER Usuarios + indices)
 --     Fase 1 del sistema de permisos (ver docs/PERMISOS.md)
 --
---     Tablas creadas:
---       Modulos                   — catalogo de modulos del sistema
---       Roles                     — roles (Usuario, Supervisor_1..10, Admin)
---       Roles_Modulos             — nivel de acceso por rol x modulo (0..4)
---       Roles_PermisosEspeciales  — permisos especiales por rol
---       AuditoriaSeguridad        — cambios en config de seguridad
---       AuditoriaAcciones         — uso de permisos especiales (OK/DENIED)
---
---     Modificaciones:
---       Usuarios.GUIDROLES        — FK al rol asignado
+--     Ejecutable en cualquier cliente ODBC (sin 'GO'). Los CREATE INDEX
+--     que referencian objetos recien creados en este mismo batch se envuelven
+--     en EXEC('...') para diferir la compilacion hasta runtime.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -38,7 +30,6 @@ BEGIN
         CONSTRAINT UQ_Modulos_CodigoInterno UNIQUE (CODIGO_INTERNO)
     );
 END;
-GO
 
 -- -----------------------------------------------------------------------------
 -- Roles — 12 roles fijos (Usuario, Supervisor_1..10, Admin)
@@ -63,7 +54,6 @@ BEGIN
         CONSTRAINT CK_Roles_Tipo CHECK (TIPO IN ('USUARIO','SUPERVISOR','ADMIN'))
     );
 END;
-GO
 
 -- -----------------------------------------------------------------------------
 -- Roles_Modulos — nivel por rol x modulo (0=sin, 1=lectura, 2=+crear, 3=+editar, 4=+eliminar)
@@ -86,7 +76,6 @@ BEGIN
         CONSTRAINT CK_RolesModulos_Nivel CHECK (NIVEL BETWEEN 0 AND 4)
     );
 END;
-GO
 
 -- -----------------------------------------------------------------------------
 -- Roles_PermisosEspeciales — permisos puntuales (solo SUPERVISOR/ADMIN)
@@ -107,7 +96,6 @@ BEGIN
         CONSTRAINT UQ_RolesPermisosEspeciales_RolCodigo UNIQUE (GUIDROLES, CODIGO)
     );
 END;
-GO
 
 -- -----------------------------------------------------------------------------
 -- AuditoriaSeguridad — cambios sobre roles, permisos y asignaciones
@@ -135,7 +123,6 @@ BEGIN
         CONSTRAINT CK_AuditoriaSeguridad_Accion  CHECK (ACCION IN ('CREAR','EDITAR','ELIMINAR','ASIGNAR','COPIAR'))
     );
 END;
-GO
 
 -- -----------------------------------------------------------------------------
 -- AuditoriaAcciones — intervenciones que usan permisos especiales
@@ -162,7 +149,6 @@ BEGIN
         CONSTRAINT CK_AuditoriaAcciones_Resultado CHECK (RESULTADO IN ('OK','DENIED'))
     );
 END;
-GO
 
 -- -----------------------------------------------------------------------------
 -- Usuarios — ALTER para agregar GUIDROLES
@@ -171,42 +157,36 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE Name = N'GUIDROLES' AND Object_ID
 BEGIN
     ALTER TABLE Usuarios ADD GUIDROLES CHAR(16) NULL;
 END;
-GO
 
 -- -----------------------------------------------------------------------------
--- Indices
+-- Indices — envueltos en EXEC() para diferir compilacion
+--
+-- Necesario porque en un mismo batch (sin GO) el compilador chequea los
+-- objetos al inicio del batch. Si la tabla/columna recien se creo antes
+-- en el mismo batch, el parser no la ve y falla la compilacion.
 -- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Usuarios_GuidRoles' AND object_id = OBJECT_ID('Usuarios'))
-    CREATE INDEX IX_Usuarios_GuidRoles ON Usuarios (GUIDROLES);
-GO
+    EXEC('CREATE INDEX IX_Usuarios_GuidRoles ON Usuarios (GUIDROLES)');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_RolesModulos_GuidRoles' AND object_id = OBJECT_ID('Roles_Modulos'))
-    CREATE INDEX IX_RolesModulos_GuidRoles ON Roles_Modulos (GUIDROLES);
-GO
+    EXEC('CREATE INDEX IX_RolesModulos_GuidRoles ON Roles_Modulos (GUIDROLES)');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_RolesPermisosEspeciales_GuidRoles' AND object_id = OBJECT_ID('Roles_PermisosEspeciales'))
-    CREATE INDEX IX_RolesPermisosEspeciales_GuidRoles ON Roles_PermisosEspeciales (GUIDROLES);
-GO
+    EXEC('CREATE INDEX IX_RolesPermisosEspeciales_GuidRoles ON Roles_PermisosEspeciales (GUIDROLES)');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditoriaSeguridad_Fecha' AND object_id = OBJECT_ID('AuditoriaSeguridad'))
-    CREATE INDEX IX_AuditoriaSeguridad_Fecha ON AuditoriaSeguridad (FECHA DESC);
-GO
+    EXEC('CREATE INDEX IX_AuditoriaSeguridad_Fecha ON AuditoriaSeguridad (FECHA DESC)');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditoriaSeguridad_GuidUsuarios' AND object_id = OBJECT_ID('AuditoriaSeguridad'))
-    CREATE INDEX IX_AuditoriaSeguridad_GuidUsuarios ON AuditoriaSeguridad (GUIDUSUARIOS);
-GO
+    EXEC('CREATE INDEX IX_AuditoriaSeguridad_GuidUsuarios ON AuditoriaSeguridad (GUIDUSUARIOS)');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditoriaAcciones_Fecha' AND object_id = OBJECT_ID('AuditoriaAcciones'))
-    CREATE INDEX IX_AuditoriaAcciones_Fecha ON AuditoriaAcciones (FECHA DESC);
-GO
+    EXEC('CREATE INDEX IX_AuditoriaAcciones_Fecha ON AuditoriaAcciones (FECHA DESC)');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditoriaAcciones_GuidUsuarios' AND object_id = OBJECT_ID('AuditoriaAcciones'))
-    CREATE INDEX IX_AuditoriaAcciones_GuidUsuarios ON AuditoriaAcciones (GUIDUSUARIOS);
-GO
+    EXEC('CREATE INDEX IX_AuditoriaAcciones_GuidUsuarios ON AuditoriaAcciones (GUIDUSUARIOS)');
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditoriaAcciones_Codigo' AND object_id = OBJECT_ID('AuditoriaAcciones'))
-    CREATE INDEX IX_AuditoriaAcciones_Codigo ON AuditoriaAcciones (CODIGOPERMISO);
-GO
+    EXEC('CREATE INDEX IX_AuditoriaAcciones_Codigo ON AuditoriaAcciones (CODIGOPERMISO)');
 
 PRINT 'Migracion 023 completada: 6 tablas de seguridad creadas + Usuarios.GUIDROLES + 8 indices';
-GO

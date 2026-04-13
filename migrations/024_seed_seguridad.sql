@@ -1,5 +1,4 @@
 SET NOCOUNT ON;
-GO
 
 -- =============================================================================
 -- 24. Seguridad — Seeds (Modulos, Roles, Roles_Modulos, Roles_PermisosEspeciales)
@@ -7,6 +6,9 @@ GO
 --
 --     Idempotente: se puede correr multiples veces sin duplicar ni pisar cambios
 --     manuales (solo inserta filas faltantes, actualiza solo campos descriptivos).
+--
+--     Ejecutable en cualquier cliente ODBC (sin 'GO'). Todas las variables
+--     DECLARE conviven en un solo batch con nombres distintos.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -45,7 +47,6 @@ WHEN NOT MATCHED THEN
             DATEDIFF(SECOND, '1970-01-01', SYSDATETIME()),
             DATEDIFF(SECOND, '1970-01-01', SYSDATETIME()),
             NULL);
-GO
 
 -- -----------------------------------------------------------------------------
 -- 24.2 Roles — 12 roles fijos
@@ -77,20 +78,17 @@ WHEN NOT MATCHED THEN
             DATEDIFF(SECOND, '1970-01-01', SYSDATETIME()),
             DATEDIFF(SECOND, '1970-01-01', SYSDATETIME()),
             NULL);
-GO
 
 -- -----------------------------------------------------------------------------
 -- 24.3 Roles_Modulos — matriz de niveles por rol x modulo
 --
 --     Niveles base (seccion 5 de docs/PERMISOS.md):
---       Usuario:         segun tabla (mezcla 0/1/3)
+--       Usuario:          segun tabla (mezcla 0/1/3)
 --       Supervisor_1..10: todos arrancan con mismo "Supervisor base"
---       Admin:           4 en TODOS los modulos
+--       Admin:            4 en TODOS los modulos
 --
 --     Idempotente: solo inserta filas faltantes (nunca pisa NIVEL modificado manualmente)
 -- -----------------------------------------------------------------------------
-
--- Tabla temporal con los niveles "base" por codigo interno
 DECLARE @nivelesBase TABLE (
     CODIGO_INTERNO    NVARCHAR(64) PRIMARY KEY,
     NIVEL_USUARIO     TINYINT,
@@ -141,7 +139,6 @@ WHERE NOT EXISTS (
     SELECT 1 FROM Roles_Modulos rm
     WHERE rm.GUIDROLES = r.GUID AND rm.CODIGO_MODULO = m.CODIGO
 );
-GO
 
 -- -----------------------------------------------------------------------------
 -- 24.4 Roles_PermisosEspeciales — permisos puntuales base
@@ -152,8 +149,6 @@ GO
 --
 --     Idempotente: solo inserta pares (rol, codigo) faltantes
 -- -----------------------------------------------------------------------------
-
--- Matriz base: codigo + flags por tipo de rol
 DECLARE @permisos TABLE (
     CODIGO           NVARCHAR(64) PRIMARY KEY,
     PARA_SUPERVISOR  BIT,
@@ -197,7 +192,6 @@ WHERE
         SELECT 1 FROM Roles_PermisosEspeciales rpe
         WHERE rpe.GUIDROLES = r.GUID AND rpe.CODIGO = p.CODIGO
     );
-GO
 
 -- -----------------------------------------------------------------------------
 -- 24.5 Usuarios.GUIDROLES — migracion inicial segun NIVEL legacy
@@ -209,7 +203,6 @@ GO
 --     Tambien: el admin hardcodeado (ID='AJE', CODIGOUSUARIO=1) va a Admin
 --              independiente del NIVEL.
 -- -----------------------------------------------------------------------------
-
 DECLARE @guidAdmin       CHAR(16) = (SELECT GUID FROM Roles WHERE NOMBRE = 'Admin');
 DECLARE @guidSupervisor1 CHAR(16) = (SELECT GUID FROM Roles WHERE NOMBRE = 'Supervisor_1');
 DECLARE @guidUsuario     CHAR(16) = (SELECT GUID FROM Roles WHERE NOMBRE = 'Usuario');
@@ -237,7 +230,6 @@ UPDATE Usuarios
 UPDATE Usuarios
    SET GUIDROLES = @guidUsuario
  WHERE GUIDROLES IS NULL;
-GO
 
 -- -----------------------------------------------------------------------------
 -- Resumen
@@ -256,4 +248,3 @@ PRINT '  Roles_Modulos:           ' + CAST(@countRM      AS NVARCHAR);
 PRINT '  Roles_PermisosEspeciales:' + CAST(@countRPE     AS NVARCHAR);
 PRINT '  Usuarios con rol:        ' + CAST(@countUsr     AS NVARCHAR);
 PRINT '  Usuarios sin rol:        ' + CAST(@countUsrNull AS NVARCHAR);
-GO
