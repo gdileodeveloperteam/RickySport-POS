@@ -23,7 +23,12 @@ const API = (function () {
           App.Logout();
         }
       }
-      throw new Error(err.error || 'Error en la solicitud');
+      // Enriquecer el Error con status + code para que el caller pueda distinguir
+      // 403 PERMISSION_DENIED / 401 USER_REQUIRED / 404 / etc. sin parsear el mensaje.
+      const e = new Error(err.error || 'Error en la solicitud');
+      e.status = res.status;
+      e.code = err.code;
+      throw e;
     }
     return res.json();
   }

@@ -18,6 +18,79 @@ const State = {
   maxDescuento: 10,
 };
 
+// ── Permisos (helper Can) ─────────────────────────────────────────────────────
+// Mapea secciones del sidebar a codigos de modulo del backend.
+const SECTION_TO_MODULO = {
+  'pos': 'POS',
+  'ventas': 'VENTAS',
+  'devoluciones': 'DEVOLUCIONES',
+  'cambios': 'CAMBIOS',
+  'clientes': 'CLIENTES',
+  'transferencias': 'TRANSFERENCIAS',
+  'compras': 'COMPRAS',
+  'gastos': 'GASTOS',
+  'cajadiaria': 'CAJA',
+  'articulos': 'ARTICULOS',
+  'bancos': 'BANCOS',
+  'sucursales': 'SUCURSALES',
+  'empleados': 'EMPLEADOS',
+  'usuarios': 'USUARIOS',
+  'ajustes': 'AJUSTES',
+  'auditoria-precios': 'AUDITORIA_PRECIOS',
+};
+
+// Helper de chequeo de permisos — mismo contrato que el backend `requirePermission`.
+// Uso:
+//   Can.modulo('ARTICULOS', 3)        -> true si nivel >= 3
+//   Can.especial('CLIENTE.REACTIVAR') -> true si el permiso esta en la lista
+//   Can.any([{ modulo: 'VENTAS', nivel: 4 }, { especial: 'VENTA.ANULAR' }])
+const Can = {
+  modulo(codigo, nivelMin = 1) {
+    if (!State.usuario) return false;
+    if (State.usuario.rol && State.usuario.rol.tipo === 'ADMIN') return true;
+    const nivel = (State.usuario.permisos && State.usuario.permisos.modulos && State.usuario.permisos.modulos[codigo]) || 0;
+    return nivel >= nivelMin;
+  },
+  especial(codigo) {
+    if (!State.usuario) return false;
+    if (State.usuario.rol && State.usuario.rol.tipo === 'ADMIN') return true;
+    const especiales = (State.usuario.permisos && State.usuario.permisos.especiales) || [];
+    return especiales.includes(codigo);
+  },
+  any(specs) {
+    if (!Array.isArray(specs)) return false;
+    return specs.some(s => s.especial ? this.especial(s.especial) : this.modulo(s.modulo, s.nivel || 1));
+  },
+};
+
+function ApplyMenuPermissions() {
+  document.querySelectorAll('.sidebar .nav-link[data-section]').forEach(a => {
+    const section = a.dataset.section;
+    const modulo = SECTION_TO_MODULO[section];
+    const li = a.closest('.nav-item');
+    if (!li || !modulo) return;
+    li.classList.toggle('d-none', !Can.modulo(modulo, 1));
+  });
+  // Colapsar grupos del sidebar que no tienen ningun item visible
+  document.querySelectorAll('.sidebar .sidebar-group').forEach(grp => {
+    const target = grp.getAttribute('href');
+    const collapse = target ? document.querySelector(target) : null;
+    if (!collapse) return;
+    const visibles = collapse.querySelectorAll('.nav-item:not(.d-none)');
+    const groupLi = grp.closest('.nav-item');
+    if (groupLi) groupLi.classList.toggle('d-none', visibles.length === 0);
+  });
+}
+
+function FirstAccessibleSection() {
+  const links = document.querySelectorAll('.sidebar .nav-link[data-section]');
+  for (const a of links) {
+    const li = a.closest('.nav-item');
+    if (li && !li.classList.contains('d-none')) return a.dataset.section;
+  }
+  return null;
+}
+
 // ── Utilidades ─────────────────────────────────────────────────────────────────
 function FormatMoney(n) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(n || 0);
@@ -199,18 +272,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function InitApp() {
   try {
-    const [sucursales, vendedores, tcPagos, tiposCobrosPagos] = await Promise.all([
-      API.GetSucursales(),
-      API.GetVendedores(),
-      API.GetTCPagos(),
-      API.GetTiposCobrosPagos(),
+    // Aplicar permisos al sidebar antes de cargar datos (para que, si el preload falla,
+    // el menu ya este bien configurado).
+    ApplyMenuPermissions();
+
+    // Preloads tolerantes: cada llamada se ejecuta solo si el usuario tiene el modulo,
+    // y un 403/error individual no rompe el resto del boot.
+    const preload = async (tieneAcceso, apiFn, label, fallback = []) => {
+      if (!tieneAcceso) return fallback;
+      try { return await apiFn(); } catch (e) {
+        if (e && e.status !== 403) console.warn(`Preload ${label}:`, e.message);
+        return fallback;
+      }
+    };
+
+    const [sucursales, vendedores, tcPagos, tiposCobrosPagos, bancosCuentas] = await Promise.all([
+      preload(Can.modulo('SUCURSALES', 1), API.GetSucursales, 'sucursales'),
+      preload(Can.modulo('VENDEDORES', 1), API.GetVendedores, 'vendedores'),
+      // TCPagos y TiposCobrosPagos tienen GET abierto (el POS los necesita), asi que
+      // se cargan siempre mientras haya sesion.
+      preload(true, API.GetTCPagos, 'tcPagos'),
+      preload(true, API.GetTiposCobrosPagos, 'tiposCobrosPagos'),
+      preload(Can.modulo('BANCOS', 1), API.GetBancosCuentas, 'bancosCuentas'),
     ]);
 
-    // BancosCuentas se carga aparte para no bloquear si falla
-    let bancosCuentas = [];
-    try { bancosCuentas = await API.GetBancosCuentas(); } catch (e) {
-      console.warn('No se pudieron cargar cuentas bancarias:', e.message);
-    }
     State.sucursales = sucursales;
     State.vendedores = vendedores;
     State.tcPagos = tcPagos;
@@ -224,7 +309,7 @@ async function InitApp() {
       if (el && ver.version) el.textContent = 'v' + ver.version;
     } catch (_) {}
 
-    // Cargar configuración de descuento máximo
+    // Cargar configuracion de descuento maximo (endpoint abierto)
     try {
       const cfg = await API.GetMaxDescuento();
       State.maxDescuento = cfg.porcentaje;
@@ -242,18 +327,23 @@ async function InitApp() {
     } else if (sucursales.length > 0) {
       State.sucursalActual = sucursales[0].GUID;
       labelSuc.textContent = (sucursales[0].NOMBRE || '').trim();
+    } else if (guidSucUsuario) {
+      // Usuario sin permiso para listar sucursales: conservar el GUID propio aunque no
+      // podamos mostrar el nombre.
+      State.sucursalActual = guidSucUsuario;
+      labelSuc.textContent = '';
     }
 
     document.getElementById('navUsuarioNombre').textContent = (State.usuario.NOMBRE || '').trim();
 
-    // Mostrar menu Usuarios solo para admin (CODIGOUSUARIO=1, ID=AJE)
-    const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
-    document.getElementById('navUsuarios').classList.toggle('d-none', !esAdmin);
-    document.getElementById('navSucursales').classList.toggle('d-none', !esAdmin);
-    document.getElementById('navAjustes').classList.toggle('d-none', !esAdmin);
-    document.getElementById('navAuditoriaPrecios').classList.toggle('d-none', !esAdmin);
-
-    App.Navigate('pos');
+    // Navegar al primer modulo accesible (fallback: POS, luego el primero disponible).
+    const inicial = Can.modulo('POS', 1) ? 'pos' : FirstAccessibleSection();
+    if (inicial) {
+      App.Navigate(inicial);
+    } else {
+      document.getElementById('mainContent').innerHTML =
+        '<div class="alert alert-warning mt-3">Su usuario no tiene acceso a ningun modulo. Contacte al administrador.</div>';
+    }
   } catch (err) {
     ShowToast('Error', 'No se pudo conectar con el servidor: ' + err.message, 'error');
   }
@@ -319,6 +409,12 @@ const App = {
   },
 
   Navigate(section) {
+    const main = document.getElementById('mainContent');
+    const modulo = SECTION_TO_MODULO[section];
+    if (modulo && !Can.modulo(modulo, 1)) {
+      main.innerHTML = '<div class="alert alert-warning mt-3">No tiene permisos para acceder a este modulo.</div>';
+      return;
+    }
     State.currentSection = section;
     document.querySelectorAll('.sidebar .nav-link').forEach(a => {
       a.classList.toggle('active', a.dataset.section === section);
@@ -331,7 +427,6 @@ const App = {
         bootstrap.Collapse.getOrCreateInstance(parentCollapse, { toggle: false }).show();
       }
     }
-    const main = document.getElementById('mainContent');
     switch (section) {
       case 'pos': RenderPOS(main); break;
       case 'ventas': RenderVentas(main); break;
@@ -6398,7 +6493,8 @@ async function BuscarClientes(page) {
   const currentPage = esInactivos ? _clientesInactivosPage : _clientesPage;
   const search = (document.getElementById('clienteSearch')?.value || '').trim();
   const div = document.getElementById('clientesResultados');
-  const nivelUsuario = (State.usuario && State.usuario.NIVEL) || 0;
+  const puedeReactivar = Can.especial('CLIENTE.REACTIVAR');
+  const puedeDesactivar = Can.modulo('CLIENTES', 4);
 
   try {
     const resp = await API.GetClientes(search || undefined, currentPage, 30, esInactivos);
@@ -6438,9 +6534,9 @@ async function BuscarClientes(page) {
               const limiteText = limite == null ? '-' : limite < 0 ? 'Ilimitado' : FormatMoney(limite);
               const inactivo = c.dts != null && c.dts !== 0;
               let btnAccion = '';
-              if (inactivo && nivelUsuario > 9) {
+              if (inactivo && puedeReactivar) {
                 btnAccion = `<button class="btn btn-sm btn-outline-success" title="Reactivar" onclick="ReactivarCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-person-check"></i></button>`;
-              } else if (!inactivo && nivelUsuario > 9) {
+              } else if (!inactivo && puedeDesactivar) {
                 btnAccion = `<button class="btn btn-sm btn-outline-danger" title="Desactivar" onclick="DesactivarCliente('${c.GUID.trim()}', '${nombre.replace(/'/g, "\\'")}')"><i class="bi bi-person-x"></i></button>`;
               }
               const tagInactivo = inactivo ? ' <span class="badge" style="background-color:#f8d7da;color:#842029">INACTIVO</span>' : '';
@@ -8165,8 +8261,7 @@ async function EliminarTipoCobroPago(guid) {
 // ============================================================================
 
 function RenderSucursales(container) {
-  const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
-  if (!esAdmin) {
+  if (!Can.modulo('SUCURSALES', 1)) {
     container.innerHTML = '<div class="alert alert-danger">No tiene permisos para acceder a esta secci&oacute;n.</div>';
     return;
   }
@@ -8340,9 +8435,7 @@ async function EliminarSucursal(guid, nombre) {
 let _usrPage = 1, _usrSortBy = 'NOMBRE', _usrSortDir = 'ASC', _usrSearchTimer = null;
 
 function RenderUsuarios(container) {
-  // Verificar acceso admin
-  const esAdmin = State.usuario.CODIGOUSUARIO === 1 && (State.usuario.ID || '').trim() === 'AJE';
-  if (!esAdmin) {
+  if (!Can.modulo('USUARIOS', 1)) {
     container.innerHTML = '<div class="alert alert-danger">No tiene permisos para acceder a esta secci&oacute;n.</div>';
     return;
   }
