@@ -323,6 +323,14 @@ const App = {
     document.querySelectorAll('.sidebar .nav-link').forEach(a => {
       a.classList.toggle('active', a.dataset.section === section);
     });
+    // Expandir el grupo padre del item activo (si está colapsado)
+    const activeLink = document.querySelector(`.sidebar .nav-link[data-section="${section}"]`);
+    if (activeLink) {
+      const parentCollapse = activeLink.closest('.collapse');
+      if (parentCollapse && !parentCollapse.classList.contains('show')) {
+        bootstrap.Collapse.getOrCreateInstance(parentCollapse, { toggle: false }).show();
+      }
+    }
     const main = document.getElementById('mainContent');
     switch (section) {
       case 'pos': RenderPOS(main); break;
@@ -739,6 +747,11 @@ const POS = {
 
   OnPlanChange() {
     const esCambioDif = POS._cambioData && POS._cambioData.diferencia > 0;
+    const esCobroDeuda = POS._modoCobroDeuda && POS._cobroDeudaData;
+    const esVentaNormal = !esCambioDif && !esCobroDeuda;
+    // Venta normal: los precios ya incluyen el recargo del tipo POS (total fijo).
+    // Cambiar plan en el modal no debe re-aplicar recargo sobre el total.
+    if (esVentaNormal) { RenderPagosModal(); return; }
     const cambioConRecargoOrig = esCambioDif && (
       (POS._cambioData.coeficiente && POS._cambioData.coeficiente !== 0 && POS._cambioData.coeficiente !== 1) ||
       (POS._cambioData.interes && POS._cambioData.interes > 0)
@@ -1566,53 +1579,20 @@ async function RenderPagosModal() {
   const divInfoTP = document.getElementById('pagoTipoPagoInfo');
   const divSelectores = document.getElementById('divPagoSelectores');
 
-  if (esVentaNormal) {
-    // Mostrar tipo de pago como read-only
-    const posTipoPago = document.getElementById('posTipoPago');
-    const tipoTexto = posTipoPago ? posTipoPago.options[posTipoPago.selectedIndex]?.text || '-' : '-';
-    const posComp = document.getElementById('posComprobante');
-    const compTexto = posComp && posComp.value ? (posComp.options[posComp.selectedIndex]?.text || '') : '';
-    const posPlanEl = document.getElementById('posPlan');
-    const planTexto = posPlanEl && posPlanEl.value ? (posPlanEl.options[posPlanEl.selectedIndex]?.text || '') : '';
-
-    let infoHtml = `
-      <div class="col-auto">
-        <label class="form-label fw-semibold mb-0">Tipo de Pago</label>
-        <div class="form-control-plaintext fw-bold fs-5">${tipoTexto}</div>
-      </div>`;
-    if (compTexto) {
-      infoHtml += `
-      <div class="col-auto">
-        <label class="form-label fw-semibold mb-0">Medio de Cobro</label>
-        <div class="form-control-plaintext fw-bold fs-5">${compTexto}</div>
-      </div>`;
-    }
-    if (planTexto) {
-      infoHtml += `
-      <div class="col-auto">
-        <label class="form-label fw-semibold mb-0">Plan</label>
-        <div class="form-control-plaintext fw-bold fs-5">${planTexto}</div>
-      </div>`;
-    }
-    if (POS._interes > 0 || (POS._coeficiente > 0 && POS._coeficiente !== 1)) {
-      infoHtml += `
-      <div class="col-auto d-flex align-items-end">
-        <span class="badge text-bg-warning fs-6 mb-1"><i class="bi bi-percent me-1"></i>Recargo: ${POS._interes}% | Coef: ${POS._coeficiente}</span>
-      </div>`;
-    }
-    divInfoTP.innerHTML = infoHtml;
-    divInfoTP.classList.remove('d-none');
+  // Selectores editables siempre que quede saldo pendiente (permite dividir
+  // el restante entre varias formas de pago). Si el saldo está cubierto, ocultar.
+  divInfoTP.classList.add('d-none');
+  divInfoTP.innerHTML = '';
+  if (esVentaNormal && restante <= 0.01) {
     divSelectores.classList.add('d-none');
   } else {
-    // Cobro deuda / cambios: mostrar selectores editables
-    divInfoTP.classList.add('d-none');
-    divInfoTP.innerHTML = '';
     divSelectores.classList.remove('d-none');
   }
 
   // ── 1. Poblar TiposCobrosPagos (internamente, para AgregarPago) ──
   const sel = document.getElementById('pagoTipo');
-  const prevTipo = POS._resetTipoPago ? '' : sel.value;
+  const esRenderInicial = POS._resetTipoPago === true;
+  const prevTipo = esRenderInicial ? '' : sel.value;
   POS._resetTipoPago = false;
   sel.innerHTML = '';
   State.tiposCobrosPagos
@@ -1630,10 +1610,12 @@ async function RenderPagosModal() {
       sel.appendChild(opt);
     });
 
-  if (esVentaNormal) {
-    // Forzar selección al tipo del POS
+  if (esVentaNormal && esRenderInicial) {
+    // Primera apertura: pre-cargar con el tipo elegido en el POS
     const posTipoPago = document.getElementById('posTipoPago');
-    if (posTipoPago && posTipoPago.value) sel.value = posTipoPago.value;
+    if (posTipoPago && posTipoPago.value && sel.querySelector(`option[value="${posTipoPago.value}"]`)) {
+      sel.value = posTipoPago.value;
+    }
   } else if (prevTipo && sel.querySelector(`option[value="${prevTipo}"]`)) {
     sel.value = prevTipo;
   } else {
@@ -1654,6 +1636,7 @@ async function RenderPagosModal() {
   // ── 2. Poblar Comprobantes (internamente) ──
   const divComp = document.getElementById('divComprobante');
   const selComp = document.getElementById('pagoComprobante');
+  const prevComp = selComp.value;
   const comprobantes = tipoNum !== null ? State.tcPagos.filter(t => t.TIPO === tipoNum) : [];
   const roComp = document.getElementById('pagoComprobanteRO');
   if (comprobantes.length > 0) {
@@ -1667,10 +1650,13 @@ async function RenderPagosModal() {
       opt.textContent = (tc.TIPO_COMPROBANTE || '').trim();
       selComp.appendChild(opt);
     });
-    // En venta normal, forzar comprobante del POS
-    if (esVentaNormal) {
+    if (esVentaNormal && esRenderInicial) {
       const posComp = document.getElementById('posComprobante');
-      if (posComp && posComp.value) selComp.value = posComp.value;
+      if (posComp && posComp.value && selComp.querySelector(`option[value="${posComp.value}"]`)) {
+        selComp.value = posComp.value;
+      }
+    } else if (prevComp && selComp.querySelector(`option[value="${prevComp}"]`)) {
+      selComp.value = prevComp;
     }
   } else {
     divComp.classList.add('d-none');
@@ -1685,6 +1671,7 @@ async function RenderPagosModal() {
   document.getElementById('divCuotas').classList.toggle('d-none', !tienePlanes);
   if (tienePlanes && compSel) {
     const selPlan = document.getElementById('pagoPlan');
+    const prevPlan = selPlan.value;
     selPlan.innerHTML = '<option value="">Sin plan</option>';
     API.GetTCPagosPlanes(compSel.GUID.trim()).then(planes => {
       planes.forEach(p => {
@@ -1693,10 +1680,13 @@ async function RenderPagosModal() {
         opt.textContent = `${(p.NOMBRECOMPROBANTEPAGO || '').trim()} - ${p.CUOTAS} cuotas (Int: ${p.INTERES}% | Coef: ${p.COEFICIENTE})`;
         selPlan.appendChild(opt);
       });
-      // En venta normal, forzar plan del POS
-      if (esVentaNormal) {
+      if (esVentaNormal && esRenderInicial) {
         const posPlanEl = document.getElementById('posPlan');
-        if (posPlanEl && posPlanEl.value) selPlan.value = posPlanEl.value;
+        if (posPlanEl && posPlanEl.value && selPlan.querySelector(`option[value="${posPlanEl.value}"]`)) {
+          selPlan.value = posPlanEl.value;
+        }
+      } else if (prevPlan && selPlan.querySelector(`option[value="${prevPlan}"]`)) {
+        selPlan.value = prevPlan;
       }
       // Aplicar recargo: cobro deuda o cambio sin recargo original
       if (!esVentaNormal && !cambioConRecargoOrig) {
