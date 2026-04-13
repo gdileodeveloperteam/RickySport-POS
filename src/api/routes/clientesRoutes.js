@@ -96,14 +96,15 @@ router.delete('/:guid',
   }
 );
 
-// NOTA: /:guid/reactivar queda sin requirePermission hasta Fase 3c
-// (se aplicará CLIENTE.REACTIVAR como permiso especial).
-router.post('/:guid/reactivar', async (req, res, next) => {
-  try {
-    await clientesRepo.EnableCliente(req.params.guid);
-    res.json({ ok: true });
-  } catch (err) { next(err); }
-});
+router.post('/:guid/reactivar',
+  requirePermission({ especial: 'CLIENTE.REACTIVAR' }),
+  async (req, res, next) => {
+    try {
+      await clientesRepo.EnableCliente(req.params.guid);
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  }
+);
 
 router.get('/:guid',
   requirePermission({ modulo: 'CLIENTES', nivel: 1 }),
