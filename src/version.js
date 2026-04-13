@@ -1,1 +1,1 @@
-module.exports = { version: '1.2.0', name: 'RickySport POS' };
+module.exports = { version: '1.3.0', name: 'RickySport POS' };

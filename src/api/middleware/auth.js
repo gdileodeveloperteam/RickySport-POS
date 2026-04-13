@@ -1,4 +1,5 @@
 const seguridadRepo = require('../../db/repositories/seguridadRepo');
+const auditoriaRepo = require('../../db/repositories/auditoriaRepo');
 
 // Rutas publicas que no requieren cargar usuario (relativas al mount point /api)
 const BYPASS_PATHS = new Set([
@@ -56,4 +57,92 @@ async function loadUser(req, res, next) {
   }
 }
 
-module.exports = { loadUser };
+// Evalua un spec de permisos contra los permisos del usuario.
+// Devuelve { allowed: bool, reason?: string }.
+//
+// Specs soportados:
+//   { modulo: 'X', nivel: 3 }                            — nivel minimo en un modulo
+//   { especial: 'CODIGO' }                               — permiso especial
+//   { any: [spec, spec, ...] }                           — OR logico
+function evaluarSpec(spec, permisos) {
+  if (!spec || !permisos) return { allowed: false, reason: 'Spec o permisos invalidos' };
+
+  if (spec.modulo) {
+    const nivel = permisos.modulos && permisos.modulos[spec.modulo] != null
+      ? permisos.modulos[spec.modulo]
+      : 0;
+    if (nivel >= (spec.nivel || 1)) return { allowed: true };
+    return { allowed: false, reason: `Requiere nivel ${spec.nivel} en modulo ${spec.modulo} (tiene ${nivel})` };
+  }
+
+  if (spec.especial) {
+    if (permisos.especiales && permisos.especiales.includes(spec.especial)) return { allowed: true };
+    return { allowed: false, reason: `Requiere permiso especial ${spec.especial}` };
+  }
+
+  if (Array.isArray(spec.any)) {
+    for (const sub of spec.any) {
+      const r = evaluarSpec(sub, permisos);
+      if (r.allowed) return { allowed: true };
+    }
+    return { allowed: false, reason: 'Ninguna de las alternativas cumple' };
+  }
+
+  return { allowed: false, reason: 'Spec sin modulo, especial ni any' };
+}
+
+// Factory: devuelve un middleware que valida el spec contra req.user.permisos.
+//
+// Comportamiento:
+//   - Sin req.user                  -> 401 USER_REQUIRED
+//   - rol.tipo === 'ADMIN'          -> permite todo (shortcut). Si es permiso especial,
+//                                       igual auditea como OK.
+//   - permiso valido                -> next(); si es especial, audita OK
+//   - permiso denegado              -> 403 PERMISSION_DENIED; si es especial, audita DENIED
+//
+// Auditoria: solo se registra para specs con `especial`. Los chequeos de modulo
+// son alto volumen y no aportan valor de auditoria (se cubren con logs si hace falta).
+function requirePermission(spec) {
+  return async (req, res, next) => {
+    try {
+      if (!req.user) {
+        if (spec.especial) {
+          await auditoriaRepo.RegistrarAccion(req, spec.especial, 'DENIED');
+        }
+        return res.status(401).json({
+          error: 'Autenticacion requerida',
+          code: 'USER_REQUIRED',
+        });
+      }
+
+      // Admin shortcut
+      if (req.user.rol && req.user.rol.tipo === 'ADMIN') {
+        if (spec.especial) {
+          await auditoriaRepo.RegistrarAccion(req, spec.especial, 'OK');
+        }
+        return next();
+      }
+
+      const result = evaluarSpec(spec, req.user.permisos);
+
+      if (result.allowed) {
+        if (spec.especial) {
+          await auditoriaRepo.RegistrarAccion(req, spec.especial, 'OK');
+        }
+        return next();
+      }
+
+      if (spec.especial) {
+        await auditoriaRepo.RegistrarAccion(req, spec.especial, 'DENIED');
+      }
+      return res.status(403).json({
+        error: result.reason || 'Permiso denegado',
+        code: 'PERMISSION_DENIED',
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+module.exports = { loadUser, requirePermission };
