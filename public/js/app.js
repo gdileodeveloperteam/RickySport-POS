@@ -37,6 +37,7 @@ const SECTION_TO_MODULO = {
   'usuarios': 'USUARIOS',
   'ajustes': 'AJUSTES',
   'auditoria-precios': 'AUDITORIA_PRECIOS',
+  'seguridad': 'SEGURIDAD',
 };
 
 // Helper de chequeo de permisos — mismo contrato que el backend `requirePermission`.
@@ -473,6 +474,7 @@ const App = {
       case 'usuarios': RenderUsuarios(main); break;
       case 'ajustes': RenderAjustes(main); break;
       case 'auditoria-precios': RenderAuditoriaPrecios(main); break;
+      case 'seguridad': RenderSeguridad(main); break;
     }
   },
 };
@@ -8865,4 +8867,599 @@ async function BuscarAuditoriaPrecios() {
   } catch (err) {
     div.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
   }
+}
+
+// ============================================================================
+// SECCION: SEGURIDAD — admin de roles, matriz de permisos, asignacion, auditorias
+// (solo accesible con modulo SEGURIDAD nivel 1 — por seed, solo Admin)
+// ============================================================================
+
+const Seg = {
+  modulos: [],            // catalogo (lazy)
+  especiales: [],         // catalogo (lazy)
+  roles: [],              // lista resumida
+  rolEditando: null,      // detalle completo del rol abierto en Configurar
+  tabActual: 'roles',     // 'roles' | 'configurar' | 'asignar' | 'auditoria'
+  auditoriaTab: 'cambios',// 'cambios' | 'acciones'
+};
+
+function RenderSeguridad(container) {
+  container.innerHTML = `
+    <h4 class="mb-3"><i class="bi bi-shield-check me-2"></i>Seguridad</h4>
+    <ul class="nav nav-tabs mb-3" id="segTabs">
+      <li class="nav-item"><a class="nav-link active" href="#" data-segtab="roles"       onclick="SegCambiarTab('roles');return false"><i class="bi bi-people me-1"></i>Roles</a></li>
+      <li class="nav-item"><a class="nav-link"        href="#" data-segtab="configurar"  onclick="SegCambiarTab('configurar');return false"><i class="bi bi-sliders me-1"></i>Configurar rol</a></li>
+      <li class="nav-item"><a class="nav-link"        href="#" data-segtab="asignar"     onclick="SegCambiarTab('asignar');return false"><i class="bi bi-person-gear me-1"></i>Asignar rol</a></li>
+      <li class="nav-item"><a class="nav-link"        href="#" data-segtab="auditoria"   onclick="SegCambiarTab('auditoria');return false"><i class="bi bi-clock-history me-1"></i>Auditoria</a></li>
+    </ul>
+    <div id="segContent"></div>
+  `;
+  SegCambiarTab(Seg.tabActual || 'roles');
+}
+
+function SegCambiarTab(tab) {
+  Seg.tabActual = tab;
+  document.querySelectorAll('#segTabs .nav-link').forEach(a => {
+    a.classList.toggle('active', a.dataset.segtab === tab);
+  });
+  const content = document.getElementById('segContent');
+  if (!content) return;
+  switch (tab) {
+    case 'roles':      SegRenderRoles(content); break;
+    case 'configurar': SegRenderConfigurar(content); break;
+    case 'asignar':    SegRenderAsignar(content); break;
+    case 'auditoria':  SegRenderAuditoria(content); break;
+  }
+}
+
+async function SegAsegurarCatalogos() {
+  if (Seg.modulos.length === 0) {
+    const { data } = await API.SegGetModulos();
+    Seg.modulos = data;
+  }
+  if (Seg.especiales.length === 0) {
+    const { data } = await API.SegGetPermisosEspeciales();
+    Seg.especiales = data;
+  }
+}
+
+// ── Tab 1: Roles ──────────────────────────────────────────────────────────────
+async function SegRenderRoles(content) {
+  content.innerHTML = `<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>`;
+  try {
+    const { data } = await API.SegGetRoles();
+    Seg.roles = data;
+    content.innerHTML = `
+      <div class="card shadow-sm">
+        <div class="card-body p-0">
+          <table class="table table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Nombre</th>
+                <th>Tipo</th>
+                <th class="text-end">Usuarios</th>
+                <th>Descripcion</th>
+                <th class="text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.map(r => `
+                <tr>
+                  <td class="fw-semibold">${SegEscHtml(r.nombre)}</td>
+                  <td><span class="badge ${r.tipo === 'ADMIN' ? 'bg-danger' : r.tipo === 'SUPERVISOR' ? 'bg-warning text-dark' : 'bg-secondary'}">${r.tipo}</span>${r.esSistema ? ' <span class="badge bg-light text-muted border">Sistema</span>' : ''}</td>
+                  <td class="text-end">${r.usuariosCount ?? 0}</td>
+                  <td class="text-muted small">${SegEscHtml(r.descripcion || '')}</td>
+                  <td class="text-center">
+                    <button class="btn btn-sm btn-outline-primary" onclick="SegAbrirConfigurar('${r.guid}')" ${r.esSistema ? 'disabled title="Rol de sistema — solo lectura"' : ''}>
+                      <i class="bi bi-sliders me-1"></i>${r.esSistema ? 'Ver' : 'Configurar'}
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    content.innerHTML = `<div class="alert alert-danger">${SegEscHtml(err.message)}</div>`;
+  }
+}
+
+async function SegAbrirConfigurar(guidRol) {
+  try {
+    await SegAsegurarCatalogos();
+    if (Seg.roles.length === 0) {
+      const { data } = await API.SegGetRoles();
+      Seg.roles = data;
+    }
+    const { data } = await API.SegGetRolDetalle(guidRol);
+    Seg.rolEditando = data;
+    SegCambiarTab('configurar');
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
+}
+
+// ── Tab 2: Configurar rol ─────────────────────────────────────────────────────
+function SegRenderConfigurar(content) {
+  if (!Seg.rolEditando) {
+    content.innerHTML = `
+      <div class="alert alert-info">
+        <i class="bi bi-info-circle me-1"></i>Seleccione un rol desde la pestana <strong>Roles</strong> para configurarlo.
+      </div>
+    `;
+    return;
+  }
+  const detalle = Seg.rolEditando;
+  const r = detalle.rol;
+  const modulos = detalle.modulos;
+  const especialesActuales = new Set(detalle.especiales);
+  const readOnly = r.esSistema;
+
+  const gruposEspeciales = {};
+  for (const p of Seg.especiales) {
+    if (!gruposEspeciales[p.grupo]) gruposEspeciales[p.grupo] = [];
+    gruposEspeciales[p.grupo].push(p);
+  }
+  const especialesDeshabilitados = readOnly || r.tipo === 'USUARIO';
+
+  const otrosRoles = Seg.roles.filter(x => x.guid !== r.guid && !x.esSistema);
+
+  content.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <h5 class="mb-0">${SegEscHtml(r.nombre)} <span class="badge ${r.tipo === 'ADMIN' ? 'bg-danger' : r.tipo === 'SUPERVISOR' ? 'bg-warning text-dark' : 'bg-secondary'}">${r.tipo}</span>${r.esSistema ? ' <span class="badge bg-light text-muted border">Sistema</span>' : ''}</h5>
+        <small class="text-muted">${SegEscHtml(r.descripcion || '')}</small>
+      </div>
+      <div class="d-flex gap-2">
+        ${(!readOnly && otrosRoles.length > 0) ? `
+          <div class="dropdown">
+            <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+              <i class="bi bi-clipboard-check me-1"></i>Copiar permisos de...
+            </button>
+            <ul class="dropdown-menu">
+              ${otrosRoles.map(o => `
+                <li><a class="dropdown-item" href="#" onclick="SegConfirmarCopiar('${r.guid}','${o.guid}','${SegEscAttr(o.nombre)}');return false">${SegEscHtml(o.nombre)}</a></li>
+              `).join('')}
+            </ul>
+          </div>
+        ` : ''}
+        <button class="btn btn-success" ${readOnly ? 'disabled' : ''} onclick="SegGuardarRol()"><i class="bi bi-check-circle me-1"></i>Guardar</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-lg-7">
+        <div class="card shadow-sm mb-3">
+          <div class="card-header bg-light fw-semibold"><i class="bi bi-grid-3x3 me-1"></i>Modulos</div>
+          <div class="card-body p-0">
+            <table class="table table-sm mb-0 no-sort-table">
+              <thead class="table-light">
+                <tr>
+                  <th>Modulo</th>
+                  <th class="text-center" title="Sin acceso">0</th>
+                  <th class="text-center" title="Lectura">1</th>
+                  <th class="text-center" title="+ Crear">2</th>
+                  <th class="text-center" title="+ Editar">3</th>
+                  <th class="text-center" title="+ Eliminar">4</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${modulos.map(m => `
+                  <tr>
+                    <td class="fw-semibold">${SegEscHtml(m.nombre)} <small class="text-muted">(${m.codigoInterno})</small></td>
+                    ${[0,1,2,3,4].map(n => `
+                      <td class="text-center">
+                        <input type="radio"
+                          name="segMod_${m.codigoInterno}"
+                          value="${n}"
+                          ${m.nivel === n ? 'checked' : ''}
+                          ${readOnly ? 'disabled' : ''}>
+                      </td>
+                    `).join('')}
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-5">
+        <div class="card shadow-sm mb-3">
+          <div class="card-header bg-light fw-semibold"><i class="bi bi-key me-1"></i>Permisos especiales${especialesDeshabilitados && !readOnly ? ' <small class="text-muted">(no aplica al rol Usuario)</small>' : ''}</div>
+          <div class="card-body">
+            ${Object.keys(gruposEspeciales).sort().map(grupo => `
+              <div class="mb-3">
+                <div class="fw-semibold text-uppercase small text-muted mb-1">${SegEscHtml(grupo)}</div>
+                ${gruposEspeciales[grupo].map(p => `
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox"
+                      id="segEsp_${p.codigo}"
+                      data-segesp="${SegEscAttr(p.codigo)}"
+                      ${especialesActuales.has(p.codigo) ? 'checked' : ''}
+                      ${especialesDeshabilitados ? 'disabled' : ''}>
+                    <label class="form-check-label" for="segEsp_${p.codigo}">
+                      <code>${SegEscHtml(p.codigo)}</code>
+                      <div class="text-muted small">${SegEscHtml(p.descripcion)}</div>
+                    </label>
+                  </div>
+                `).join('')}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function SegConfirmarCopiar(guidDestino, guidOrigen, nombreOrigen) {
+  if (!confirm(`Esto reemplazara TODOS los permisos del rol actual por los de "${nombreOrigen}". Continuar?`)) return;
+  SegEjecutarCopiar(guidDestino, guidOrigen);
+}
+
+async function SegEjecutarCopiar(guidDestino, guidOrigen) {
+  try {
+    await API.SegCopiarPermisos(guidDestino, guidOrigen);
+    const { data } = await API.SegGetRolDetalle(guidDestino);
+    Seg.rolEditando = data;
+    SegRenderConfigurar(document.getElementById('segContent'));
+    ShowToast('Exito', 'Permisos copiados correctamente', 'success');
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+  }
+}
+
+async function SegGuardarRol() {
+  if (!Seg.rolEditando) return;
+  const guidRol = Seg.rolEditando.rol.guid;
+  const esUsuario = Seg.rolEditando.rol.tipo === 'USUARIO';
+
+  const modulos = Seg.rolEditando.modulos.map(m => {
+    const checked = document.querySelector(`input[name="segMod_${m.codigoInterno}"]:checked`);
+    return { codigoInterno: m.codigoInterno, nivel: checked ? parseInt(checked.value) : 0 };
+  });
+
+  const especiales = esUsuario ? [] : Array.from(
+    document.querySelectorAll('input[data-segesp]:checked')
+  ).map(el => el.dataset.segesp);
+
+  const btnGuardar = document.querySelector('#segContent button.btn-success');
+  if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...'; }
+
+  try {
+    const respMod = await API.SegSetRolModulos(guidRol, modulos);
+    let respEsp = null;
+    if (!esUsuario) {
+      respEsp = await API.SegSetRolEspeciales(guidRol, especiales);
+    }
+    const cambiosMod = (respMod.data && respMod.data.cambios) ? respMod.data.cambios.length : 0;
+    const cambiosEsp = respEsp && respEsp.data ? (respEsp.data.agregados.length + respEsp.data.eliminados.length) : 0;
+    ShowToast('Exito', `Guardado: ${cambiosMod} cambios en modulos, ${cambiosEsp} en especiales`, 'success');
+    const { data } = await API.SegGetRolDetalle(guidRol);
+    Seg.rolEditando = data;
+    SegRenderConfigurar(document.getElementById('segContent'));
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+    if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.innerHTML = '<i class="bi bi-check-circle me-1"></i>Guardar'; }
+  }
+}
+
+// ── Tab 3: Asignar rol a usuarios ─────────────────────────────────────────────
+async function SegRenderAsignar(content) {
+  content.innerHTML = `<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>`;
+  try {
+    const [usuariosResp, rolesResp] = await Promise.all([
+      API.SegGetUsuariosRol(),
+      Seg.roles.length === 0 ? API.SegGetRoles() : Promise.resolve({ data: Seg.roles }),
+    ]);
+    Seg.roles = rolesResp.data;
+    const usuarios = usuariosResp.data;
+    const rolesAsignables = Seg.roles.filter(r => r.tipo !== 'ADMIN');
+
+    content.innerHTML = `
+      <div class="card shadow-sm mb-3">
+        <div class="card-body d-flex gap-2 align-items-center">
+          <input type="text" id="segAsignarSearch" class="form-control" placeholder="Buscar por ID o nombre..." onkeyup="SegFiltrarAsignar()">
+        </div>
+      </div>
+      <div class="card shadow-sm">
+        <div class="card-body p-0">
+          <table class="table table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Rol actual</th>
+                <th style="width:260px">Cambiar rol</th>
+              </tr>
+            </thead>
+            <tbody id="segTablaAsignar">
+              ${usuarios.map(u => SegRowAsignar(u, rolesAsignables)).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    content.innerHTML = `<div class="alert alert-danger">${SegEscHtml(err.message)}</div>`;
+  }
+}
+
+function SegRowAsignar(u, rolesAsignables) {
+  const esAdmin = u.rolTipo === 'ADMIN';
+  const options = rolesAsignables.map(r =>
+    `<option value="${r.guid}" ${u.rolGuid === r.guid ? 'selected' : ''}>${SegEscHtml(r.nombre)}</option>`
+  ).join('');
+  return `
+    <tr data-segusr="${SegEscAttr((u.id + ' ' + u.nombre).toLowerCase())}">
+      <td><code>${SegEscHtml(u.id)}</code></td>
+      <td class="fw-semibold">${SegEscHtml(u.nombre)}</td>
+      <td>
+        ${u.rolNombre ? `<span class="badge ${esAdmin ? 'bg-danger' : u.rolTipo === 'SUPERVISOR' ? 'bg-warning text-dark' : 'bg-secondary'}">${SegEscHtml(u.rolNombre)}</span>` : '<span class="text-muted small">Sin rol</span>'}
+      </td>
+      <td>
+        ${esAdmin
+          ? '<span class="text-muted small"><i class="bi bi-lock me-1"></i>Admin no modificable desde la UI</span>'
+          : `<select class="form-select form-select-sm" data-prev="${u.rolGuid || ''}" onchange="SegAsignarRolUsuario('${u.guid}', this)">
+              <option value="">— Seleccionar —</option>
+              ${options}
+            </select>`
+        }
+      </td>
+    </tr>
+  `;
+}
+
+function SegFiltrarAsignar() {
+  const q = (document.getElementById('segAsignarSearch').value || '').trim().toLowerCase();
+  document.querySelectorAll('#segTablaAsignar tr[data-segusr]').forEach(tr => {
+    tr.classList.toggle('d-none', q && !tr.dataset.segusr.includes(q));
+  });
+}
+
+async function SegAsignarRolUsuario(guidUsuario, select) {
+  const guidRol = select.value;
+  if (!guidRol) return;
+  const rolNombre = select.options[select.selectedIndex].text;
+  if (!confirm(`Asignar el rol "${rolNombre}" a este usuario?`)) {
+    select.value = select.dataset.prev || '';
+    return;
+  }
+  try {
+    select.disabled = true;
+    await API.SegAsignarRol(guidUsuario, guidRol);
+    ShowToast('Exito', `Rol asignado: ${rolNombre}`, 'success');
+    SegRenderAsignar(document.getElementById('segContent'));
+  } catch (err) {
+    ShowToast('Error', err.message, 'error');
+    select.disabled = false;
+    select.value = select.dataset.prev || '';
+  }
+}
+
+// ── Tab 4: Auditoria ──────────────────────────────────────────────────────────
+function SegRenderAuditoria(content) {
+  content.innerHTML = `
+    <ul class="nav nav-pills mb-3" id="segAuditPills">
+      <li class="nav-item"><a class="nav-link ${Seg.auditoriaTab === 'cambios' ? 'active' : ''}"  href="#" data-segauditsub="cambios"  onclick="SegCambiarSubAuditoria('cambios');return false">Cambios de configuracion</a></li>
+      <li class="nav-item"><a class="nav-link ${Seg.auditoriaTab === 'acciones' ? 'active' : ''}" href="#" data-segauditsub="acciones" onclick="SegCambiarSubAuditoria('acciones');return false">Intervenciones operativas</a></li>
+    </ul>
+    <div id="segAuditContent"></div>
+  `;
+  SegCambiarSubAuditoria(Seg.auditoriaTab);
+}
+
+function SegCambiarSubAuditoria(tipo) {
+  Seg.auditoriaTab = tipo;
+  document.querySelectorAll('#segAuditPills .nav-link').forEach(a => {
+    a.classList.toggle('active', a.dataset.segauditsub === tipo);
+  });
+  const div = document.getElementById('segAuditContent');
+  if (!div) return;
+  if (tipo === 'cambios') SegRenderAuditCambios(div);
+  else SegRenderAuditAcciones(div);
+}
+
+function SegRenderAuditCambios(div) {
+  div.innerHTML = `
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-3">
+            <label class="form-label small mb-0">Desde</label>
+            <input type="date" id="segAuditDesde" class="form-control form-control-sm" value="${Days30AgoISO()}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small mb-0">Hasta</label>
+            <input type="date" id="segAuditHasta" class="form-control form-control-sm" value="${TodayISO()}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-0">Entidad</label>
+            <select id="segAuditEntidad" class="form-select form-select-sm">
+              <option value="">Todas</option>
+              <option value="ROL">ROL</option>
+              <option value="ROL_MODULO">ROL_MODULO</option>
+              <option value="ROL_PERMISO">ROL_PERMISO</option>
+              <option value="USUARIO_ROL">USUARIO_ROL</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-0">Accion</label>
+            <select id="segAuditAccion" class="form-select form-select-sm">
+              <option value="">Todas</option>
+              <option value="CREAR">CREAR</option>
+              <option value="EDITAR">EDITAR</option>
+              <option value="ELIMINAR">ELIMINAR</option>
+              <option value="ASIGNAR">ASIGNAR</option>
+              <option value="COPIAR">COPIAR</option>
+            </select>
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button class="btn btn-primary btn-sm w-100" onclick="SegCargarAuditCambios()"><i class="bi bi-search me-1"></i>Buscar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="segAuditCambiosResult"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
+  `;
+  SegCargarAuditCambios();
+}
+
+async function SegCargarAuditCambios() {
+  const target = document.getElementById('segAuditCambiosResult');
+  if (!target) return;
+  target.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
+  try {
+    const params = {
+      desde: document.getElementById('segAuditDesde')?.value,
+      hasta: document.getElementById('segAuditHasta')?.value,
+      entidad: document.getElementById('segAuditEntidad')?.value,
+      accion: document.getElementById('segAuditAccion')?.value,
+      limit: 500,
+    };
+    if (params.hasta) params.hasta = params.hasta + 'T23:59:59';
+    const { data } = await API.SegGetAuditoria(params);
+    target.innerHTML = data.length === 0
+      ? '<div class="alert alert-info">Sin registros para los filtros seleccionados.</div>'
+      : `
+        <div class="card shadow-sm">
+          <div class="card-body p-0">
+            <table class="table table-hover table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Fecha</th>
+                  <th>Usuario</th>
+                  <th>Entidad</th>
+                  <th>Accion</th>
+                  <th>Antes</th>
+                  <th>Despues</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.map(a => `
+                  <tr>
+                    <td class="text-nowrap small">${SegFormatFechaHora(a.fecha)}</td>
+                    <td><strong>${SegEscHtml(a.usuarioId)}</strong> <small class="text-muted">${SegEscHtml(a.usuarioNombre)}</small></td>
+                    <td><code class="small">${SegEscHtml(a.entidad)}</code></td>
+                    <td><span class="badge bg-info">${SegEscHtml(a.accion)}</span></td>
+                    <td><pre class="small mb-0 text-muted" style="max-width:320px;white-space:pre-wrap">${SegEscHtml(SegFormatJson(a.antesJson))}</pre></td>
+                    <td><pre class="small mb-0" style="max-width:320px;white-space:pre-wrap">${SegEscHtml(SegFormatJson(a.despuesJson))}</pre></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+  } catch (err) {
+    target.innerHTML = `<div class="alert alert-danger">${SegEscHtml(err.message)}</div>`;
+  }
+}
+
+function SegRenderAuditAcciones(div) {
+  div.innerHTML = `
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-3">
+            <label class="form-label small mb-0">Desde</label>
+            <input type="date" id="segAcDesde" class="form-control form-control-sm" value="${Days30AgoISO()}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small mb-0">Hasta</label>
+            <input type="date" id="segAcHasta" class="form-control form-control-sm" value="${TodayISO()}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-0">Codigo</label>
+            <input type="text" id="segAcCodigo" class="form-control form-control-sm" placeholder="ej: VENTA.ANULAR">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-0">Resultado</label>
+            <select id="segAcResultado" class="form-select form-select-sm">
+              <option value="">Todos</option>
+              <option value="OK">OK</option>
+              <option value="DENIED">DENIED</option>
+            </select>
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button class="btn btn-primary btn-sm w-100" onclick="SegCargarAuditAcciones()"><i class="bi bi-search me-1"></i>Buscar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="segAuditAccionesResult"><div class="text-center py-4"><div class="spinner-border text-primary"></div></div></div>
+  `;
+  SegCargarAuditAcciones();
+}
+
+async function SegCargarAuditAcciones() {
+  const target = document.getElementById('segAuditAccionesResult');
+  if (!target) return;
+  target.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
+  try {
+    const params = {
+      desde: document.getElementById('segAcDesde')?.value,
+      hasta: document.getElementById('segAcHasta')?.value,
+      codigoPermiso: document.getElementById('segAcCodigo')?.value,
+      resultado: document.getElementById('segAcResultado')?.value,
+      limit: 500,
+    };
+    if (params.hasta) params.hasta = params.hasta + 'T23:59:59';
+    const { data } = await API.SegGetAuditoriaAcciones(params);
+    target.innerHTML = data.length === 0
+      ? '<div class="alert alert-info">Sin registros para los filtros seleccionados.</div>'
+      : `
+        <div class="card shadow-sm">
+          <div class="card-body p-0">
+            <table class="table table-hover table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Fecha</th>
+                  <th>Usuario</th>
+                  <th>Permiso</th>
+                  <th>Resultado</th>
+                  <th>Detalle</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.map(a => `
+                  <tr class="${a.resultado === 'DENIED' ? 'table-warning' : ''}">
+                    <td class="text-nowrap small">${SegFormatFechaHora(a.fecha)}</td>
+                    <td><strong>${SegEscHtml(a.usuarioId)}</strong> <small class="text-muted">${SegEscHtml(a.usuarioNombre)}</small></td>
+                    <td><code class="small">${SegEscHtml(a.codigoPermiso)}</code></td>
+                    <td><span class="badge ${a.resultado === 'OK' ? 'bg-success' : 'bg-danger'}">${SegEscHtml(a.resultado)}</span></td>
+                    <td><pre class="small mb-0 text-muted" style="max-width:400px;white-space:pre-wrap">${SegEscHtml(SegFormatJson(a.detalleJson))}</pre></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+  } catch (err) {
+    target.innerHTML = `<div class="alert alert-danger">${SegEscHtml(err.message)}</div>`;
+  }
+}
+
+// ── Helpers locales de Seguridad ──────────────────────────────────────────────
+function SegFormatJson(obj) {
+  if (obj == null) return '-';
+  try { return JSON.stringify(obj, null, 2); } catch (_) { return String(obj); }
+}
+function SegEscHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function SegEscAttr(s) {
+  return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function SegFormatFechaHora(d) {
+  if (!d) return '-';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '-';
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(dt.getDate())}/${pad(dt.getMonth()+1)}/${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }

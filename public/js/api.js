@@ -411,6 +411,36 @@ const API = (function () {
     return Request(`/config/auditoria-precios${q ? '?' + q : ''}`);
   }
 
+  // Seguridad (admin)
+  async function SegGetModulos() { return Request('/seguridad/modulos'); }
+  async function SegGetPermisosEspeciales() { return Request('/seguridad/permisos-especiales'); }
+  async function SegGetRoles() { return Request('/seguridad/roles'); }
+  async function SegGetRolDetalle(guid) { return Request(`/seguridad/roles/${guid}`); }
+  async function SegSetRolModulos(guid, modulos) {
+    return Request(`/seguridad/roles/${guid}/modulos`, { method: 'PUT', body: JSON.stringify({ modulos }) });
+  }
+  async function SegSetRolEspeciales(guid, especiales) {
+    return Request(`/seguridad/roles/${guid}/permisos`, { method: 'PUT', body: JSON.stringify({ especiales }) });
+  }
+  async function SegCopiarPermisos(guidDestino, guidOrigen) {
+    return Request(`/seguridad/roles/${guidDestino}/copiar-desde`, { method: 'POST', body: JSON.stringify({ guidOrigen }) });
+  }
+  async function SegGetUsuariosRol(search) {
+    const q = search ? `?search=${encodeURIComponent(search)}` : '';
+    return Request(`/seguridad/usuarios-rol${q}`);
+  }
+  async function SegAsignarRol(guidUsuario, guidRol) {
+    return Request(`/seguridad/usuarios-rol/${guidUsuario}`, { method: 'PUT', body: JSON.stringify({ guidRol }) });
+  }
+  async function SegGetAuditoria(params = {}) {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
+    return Request(`/seguridad/auditoria${q ? '?' + q : ''}`);
+  }
+  async function SegGetAuditoriaAcciones(params = {}) {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
+    return Request(`/seguridad/auditoria-acciones${q ? '?' + q : ''}`);
+  }
+
   return {
     Login, GetUsuarios, GetUsuarioByGuid, CreateUsuario, UpdateUsuario, DeleteUsuario,
     GetArticulos, GetArticuloByCodigo, GetArticuloByGuid, GetMovimientoArticulos, CreateArticulo, UpdateArticulo, DeleteArticulo,
@@ -433,6 +463,10 @@ const API = (function () {
     GetCajaDiaria, GetCajaDiariaResumen,
     AutorizarARCA,
     GetMaxDescuento, SetMaxDescuento, GetAuditoriaPrecios,
+    SegGetModulos, SegGetPermisosEspeciales, SegGetRoles, SegGetRolDetalle,
+    SegSetRolModulos, SegSetRolEspeciales, SegCopiarPermisos,
+    SegGetUsuariosRol, SegAsignarRol,
+    SegGetAuditoria, SegGetAuditoriaAcciones,
     GetVersion: () => Request('/version'),
   };
 })();
